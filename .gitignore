@@ -9,6 +9,9 @@ node_modules/
 coverage/
 dist/
 
+# WorkBuddy 工作区数据（本地工具目录，不属于上游项目）
+.workbuddy/
+
 state/**
 logs/**
 *.log
