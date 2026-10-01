@@ -62,13 +62,13 @@ const num = (value, fallback = 0) => optionalNumber(value) ?? fallback;
 const first = (...values) => values.find(value => value !== undefined && value !== null && value !== '');
 const lower = value => String(value ?? '').toLowerCase();
 
-function normalizeAddress(value, chain = 'robinhood') {
+function normalizeAddress(value, chain = 'bsc') {
   if (typeof value !== 'string') return '';
   const normalized = value.trim();
   return lower(chain) === 'sol' ? normalized : normalized.toLowerCase();
 }
 
-function validAddressForChain(value, chain = 'robinhood') {
+function validAddressForChain(value, chain = 'bsc') {
   return validTokenAddress(lower(chain), value);
 }
 
@@ -630,7 +630,7 @@ function unixSeconds(value) {
   return parsed >= 1_000_000_000_000 ? parsed / 1000 : parsed;
 }
 
-export function empiricalSellability({ info, discovery, traders, nowSec = Date.now() / 1000, windowSec = 5 * 60, chain = 'robinhood' }) {
+export function empiricalSellability({ info, discovery, traders, nowSec = Date.now() / 1000, windowSec = 5 * 60, chain = 'bsc' }) {
   const price = info.price || {};
   const sells5m = optionalNumber(first(price.sells_5m, discovery.sells_5m, discovery.sells));
   const sells24h = optionalNumber(first(price.sells_24h, discovery.sells_24h));

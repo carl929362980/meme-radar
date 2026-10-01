@@ -54,8 +54,8 @@ test('public status is a field allowlist and removes raw provider and queue deta
     version: 2,
     status: 'ERROR',
     error: 'Command failed with confidential detail do-not-return-this',
-    activeChain: 'robinhood',
-    supportedChains: ['robinhood', 'sol', 'not-real'],
+    activeChain: 'bsc',
+    supportedChains: ['bsc', 'sol', 'not-real'],
     lastAttemptAt: 100,
     lastSuccessAt: 90,
     nextCycleAt: 200,
@@ -100,7 +100,7 @@ test('public status is a field allowlist and removes raw provider and queue deta
   });
   const serialized = JSON.stringify(result);
   assert.equal(result.version, 2);
-  assert.deepEqual(result.supportedChains, ['robinhood', 'sol']);
+  assert.deepEqual(result.supportedChains, ['bsc', 'sol']);
   assert.equal(result.auditQueueStats.total, 12);
   assert.equal(result.outcomeSummary.averageReturn5m, 0.12);
   assert.equal(result.outcomeSummary.completed24h, 1);
@@ -228,10 +228,10 @@ test('HTTP handler enforces local boundary, strong CSP and only safe local confi
   const server = createServer({
     state,
     settings,
-    supportedChains: ['sol', 'bsc', 'robinhood'],
+    supportedChains: ['sol', 'bsc'],
     switchChain: async chain => {
       switchedTo = chain;
-      return { activeChain: 'robinhood', pendingChain: chain, queued: true };
+      return { activeChain: 'bsc', pendingChain: chain, queued: true };
     }
   });
   const page = await dispatch(server);
@@ -267,7 +267,7 @@ test('HTTP handler enforces local boundary, strong CSP and only safe local confi
   assert.deepEqual(JSON.parse(switchResponse.body), {
     accepted: true,
     requestedChain: 'sol',
-    activeChain: 'robinhood',
+    activeChain: 'bsc',
     pendingChain: 'sol',
     queued: true
   });

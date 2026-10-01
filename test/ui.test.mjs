@@ -341,8 +341,8 @@ test('翻译词典完整覆盖静态挂点和动态文案键', () => {
   for (const key of new Set([...staticKeys, ...dynamicKeys])) assert.ok(messages[key], '缺少翻译键：' + key);
 });
 
-test('顶部链标签可直接加入或切换扫描，且始终最多三条', async () => {
-  for (const chain of ['sol', 'bsc', 'base', 'eth', 'robinhood']) {
+test('顶部链标签可直接加入或切换扫描，且只呈现本版本支持的链', async () => {
+  for (const chain of ['sol', 'bsc']) {
     assert.match(html, new RegExp("id: '" + chain + "'"));
   }
   assert.match(html, /renderChainSwitcher\(null\)/);
@@ -352,9 +352,9 @@ test('顶部链标签可直接加入或切换扫描，且始终最多三条', as
     const elements = { chainSwitcher: { innerHTML: '' }, chainHint: { textContent: '' } };
     const requests = [], storage = [], toasts = [];
     const context = {
-      chainCatalog: ['sol', 'bsc', 'base', 'eth', 'robinhood'].map(id => ({ id })),
+      chainCatalog: ['sol', 'bsc'].map(id => ({ id })),
       chainSwitching: false, selectedChainsDirty: true, viewChain: view,
-      lastData: { activeChain: active, supportedChains: ['sol', 'bsc', 'base', 'eth', 'robinhood'], scheduler: { enabledChains: enabled, scanningChain: active } },
+      lastData: { activeChain: active, supportedChains: ['sol', 'bsc'], scheduler: { enabledChains: enabled, scanningChain: active } },
       byId: id => elements[id], chainLabel: chain => chain.id, escapeHtml: String, t: key => key,
       showToast: value => toasts.push(value), currentLocale: 'en', hasChinese: () => false,
       postLocal: async (url, body) => { requests.push({ url, body }); return { enabledChains: body.chains }; },
@@ -366,7 +366,7 @@ test('顶部链标签可直接加入或切换扫描，且始终最多三条', as
 
   const adding = harness(['bsc']);
   adding.context.renderChainSwitcher(adding.context.lastData);
-  for (const chain of ['sol', 'bsc', 'base', 'eth', 'robinhood']) {
+  for (const chain of ['sol', 'bsc']) {
     const button = adding.elements.chainSwitcher.innerHTML.match(new RegExp('<button[^>]*data-chain="' + chain + '"[^>]*>'))?.[0];
     assert.ok(button, chain + ' 应显示');
     assert.doesNotMatch(button, /\sdisabled(?:\s|>)/, chain + ' 应可点击');
@@ -378,24 +378,23 @@ test('顶部链标签可直接加入或切换扫描，且始终最多三条', as
   adding.context.renderChainSwitcher(null);
   assert.doesNotMatch(adding.elements.chainSwitcher.innerHTML, /chainPollingBadge/);
   assert.match(adding.elements.chainSwitcher.innerHTML, /chainOfflineHint/);
-  await adding.context.switchActiveChain('base');
-  assert.deepEqual(JSON.parse(JSON.stringify(adding.requests)), [{ url: '/api/scan-chains', body: { chains: ['bsc', 'base'] } }]);
-  assert.equal(adding.context.viewChain, 'base');
 
-  const replacing = harness(['bsc', 'sol', 'base'], 'bsc');
-  await replacing.context.switchActiveChain('eth');
-  assert.deepEqual(JSON.parse(JSON.stringify(replacing.requests)), [{ url: '/api/scan-chains', body: { chains: ['eth', 'sol', 'base'] } }]);
-  assert.equal(replacing.context.viewChain, 'eth');
+  // 该链未在扫描集中：加入而不是替换，且不越出本版本支持的链。
+  await adding.context.switchActiveChain('sol');
+  assert.deepEqual(JSON.parse(JSON.stringify(adding.requests)), [{ url: '/api/scan-chains', body: { chains: ['bsc', 'sol'] } }]);
+  assert.equal(adding.context.viewChain, 'sol');
 
+  // 两链都已在扫描集：只切换视图，不再发请求。
   const viewing = harness(['bsc', 'sol'], 'bsc');
   await viewing.context.switchActiveChain('sol');
   assert.deepEqual(viewing.requests, []);
   assert.equal(viewing.context.viewChain, 'sol');
 
-  const restored = harness(['bsc', 'robinhood'], 'robinhood', 'eth');
+  // 视图链不在扫描集时，回落到正在扫描的链并持久化。
+  const restored = harness(['bsc'], 'bsc', 'sol');
   assert.equal(restored.context.ensureVisibleChain(restored.context.lastData), true);
-  assert.equal(restored.context.viewChain, 'robinhood');
-  assert.deepEqual(JSON.parse(JSON.stringify(restored.storage)), [{ key: 'memeRadarViewChainV1', value: 'robinhood' }]);
+  assert.equal(restored.context.viewChain, 'bsc');
+  assert.deepEqual(JSON.parse(JSON.stringify(restored.storage)), [{ key: 'memeRadarViewChainV1', value: 'bsc' }]);
   assert.doesNotMatch(html.slice(start, end), /\/api\/active-chain/);
 });
 

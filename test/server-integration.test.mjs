@@ -116,20 +116,20 @@ test('normal API configure uploads succeed, but disconnected clients cannot comm
 test('status exposes allowlisted shared scheduling and market-only screening without refreshing evidence', async () => {
   const now = Date.now(), next = now + 600_000, observedAt = now - 120_000;
   const state = { value: { activeChain: 'bsc', status: 'RUNNING', lastSuccessAt: observedAt,
-    chainStates: { eth: { lastSuccessAt: observedAt, nextCycleAt: now - 1, screening: {
+    chainStates: { sol: { lastSuccessAt: observedAt, nextCycleAt: now - 1, screening: {
       checkedAt: observedAt, received: 10, marketQualified: 2, filtered: 8,
       reasonCounts: { stale: 4, known_risk: 1, rawSecret: 100 }, private: 'not-public'
     } } } } };
   const server = createServer({ settings: { ...settings, maxDeepAuditsPerCycle: 0 }, state,
-    controls: { value: { enabledChains: ['bsc', 'eth'], annotations: {} } }, getSchedulerStatus: chain => ({
+    controls: { value: { enabledChains: ['bsc', 'sol'], annotations: {} } }, getSchedulerStatus: chain => ({
       scope: 'shared-provider', sharedIntervalMs: 300000, nominalChainIntervalMs: 600000,
-      eligibleChains: ['bsc', 'eth', 'secret-chain'], selectedChain: chain, queuePosition: 2,
+      eligibleChains: ['bsc', 'sol', 'secret-chain'], selectedChain: chain, queuePosition: 2,
       nextSharedAttemptAt: now + 300000, selectedNextAttemptAt: next, estimate: 'earliest', reason: 'shared_cadence', private: 'not-public'
     }) });
-  const { body } = await dispatch(server, '/api/status?chain=eth', { method: 'GET' });
+  const { body } = await dispatch(server, '/api/status?chain=sol', { method: 'GET' });
   assert.equal(body.nextCycleAt, next); assert.equal(body.lastSuccessAt, observedAt);
-  assert.equal(body.scheduler.selectedChain, 'eth'); assert.equal(body.scheduler.sharedIntervalMs, 300000);
-  assert.deepEqual(body.scheduler.eligibleChains, ['bsc', 'eth']); assert.equal(body.scheduler.guaranteed, false);
+  assert.equal(body.scheduler.selectedChain, 'sol'); assert.equal(body.scheduler.sharedIntervalMs, 300000);
+  assert.deepEqual(body.scheduler.eligibleChains, ['bsc', 'sol']); assert.equal(body.scheduler.guaranteed, false);
   assert.equal(body.screening.mode, 'market_only'); assert.equal(body.screening.securityStatus, 'UNVERIFIED');
   assert.equal(body.screening.deepAuditEnabled, false); assert.equal(body.screening.checkedAt, observedAt);
   assert.equal(body.screening.reasonCounts.stale, 4); assert.doesNotMatch(JSON.stringify(body), /not-public|rawSecret|secret-chain/);
@@ -137,10 +137,10 @@ test('status exposes allowlisted shared scheduling and market-only screening wit
 
 test('unpredictable selected-chain turn clears its obsolete timer instead of promising a retry', async () => {
   const now = Date.now();
-  const server = createServer({ settings, state: { value: { activeChain: 'bsc', chainStates: { robinhood: { nextCycleAt: now - 1 } } } },
-    controls: { value: { enabledChains: ['bsc', 'robinhood'], annotations: {} } },
+  const server = createServer({ settings, state: { value: { activeChain: 'bsc', chainStates: { sol: { nextCycleAt: now - 1 } } } },
+    controls: { value: { enabledChains: ['bsc', 'sol'], annotations: {} } },
     getSchedulerStatus: () => ({ selectedNextAttemptAt: null, estimate: 'unavailable', reason: 'recovery_chain_deferred', eligibleChains: ['bsc'] }) });
-  const { body } = await dispatch(server, '/api/status?chain=robinhood', { method: 'GET' });
+  const { body } = await dispatch(server, '/api/status?chain=sol', { method: 'GET' });
   assert.equal(body.nextCycleAt, 0); assert.equal(body.scheduler.selectedNextAttemptAt, null);
   assert.equal(body.scheduler.reason, 'recovery_chain_deferred');
 });
@@ -156,9 +156,9 @@ test('disabled deep-review endpoint refuses before reading a snapshot or accepti
 test('selected-chain timers inherit current global AVE cooldown without changing old success time', async () => {
   const now = Date.now(), retry = now + 500000;
   const server = createServer({ settings, state: { value: { activeChain: 'bsc', status: 'RUNNING',
-    chainStates: { robinhood: { status: 'RATE_LIMITED', retryAt: now - 5000, nextCycleAt: now - 5000, lastSuccessAt: now - 1200000 } } } },
+    chainStates: { sol: { status: 'RATE_LIMITED', retryAt: now - 5000, nextCycleAt: now - 5000, lastSuccessAt: now - 1200000 } } } },
     getMarketStatus: () => ({ nextAllowedAt: retry, pauseCode: 'AVE_RATE_LIMITED', recovery: { active: true, headOnly: true, auditAllowed: false } }) });
-  const { status, body } = await dispatch(server, '/api/status?chain=robinhood', { method: 'GET' });
+  const { status, body } = await dispatch(server, '/api/status?chain=sol', { method: 'GET' });
   assert.equal(status, 200); assert.equal(body.retryAt, retry); assert.equal(body.nextCycleAt, retry);
   assert.equal(body.status, 'RATE_LIMITED'); assert.equal(body.lastSuccessAt, now - 1200000);
   assert.equal(body.aveMarket.recovery.auditAllowed, false);
@@ -167,9 +167,9 @@ test('selected-chain timers inherit current global AVE cooldown without changing
 test('an expired per-chain rate status is not shown as a current provider-wide wait', async () => {
   const now = Date.now();
   const server = createServer({ settings, state: { value: { activeChain: 'bsc', status: 'RUNNING',
-    chainStates: { robinhood: { status: 'RATE_LIMITED', retryAt: now - 5000, nextCycleAt: now - 5000, lastSuccessAt: now - 1200000 } } } },
+    chainStates: { sol: { status: 'RATE_LIMITED', retryAt: now - 5000, nextCycleAt: now - 5000, lastSuccessAt: now - 1200000 } } } },
     getMarketStatus: () => ({ nextAllowedAt: 0, pauseCode: null, recovery: { active: true, headOnly: false, auditAllowed: false } }) });
-  const { status, body } = await dispatch(server, '/api/status?chain=robinhood', { method: 'GET' });
+  const { status, body } = await dispatch(server, '/api/status?chain=sol', { method: 'GET' });
   assert.equal(status, 200); assert.equal(body.status, 'DEGRADED'); assert.equal(body.retryAt, 0);
   assert.equal(body.lastSuccessAt, now - 1200000); assert.equal(body.aveMarket.recovery.headOnly, false);
 });
@@ -177,21 +177,21 @@ test('an expired per-chain rate status is not shown as a current provider-wide w
 test('disabled and expired chain views never expose a historical RUNNING state', async () => {
   const now = Date.now();
   const scope = lastSuccessAt => ({ status: 'RUNNING', scanInProgress: false, lastSuccessAt, generatedAt: lastSuccessAt });
-  const controls = { value: { enabledChains: ['bsc', 'eth'], annotations: {} } };
+  const controls = { value: { enabledChains: ['bsc'], annotations: {} } };
   const state = { value: { activeChain: 'bsc', status: 'RUNNING', lastSuccessAt: now,
-    chainStates: { robinhood: scope(now), eth: scope(now - 20 * 60_000), sol: scope(now) } } };
+    chainStates: { sol: scope(now - 20 * 60_000) } } };
   const server = createServer({ settings: { ...settings, scanIntervalMs: 120_000 }, state, controls });
 
-  const disabled = await dispatch(server, '/api/status?chain=robinhood', { method: 'GET' });
+  // A chain outside the scan set cannot present its old run as current.
+  const disabled = await dispatch(server, '/api/status?chain=sol', { method: 'GET' });
   assert.equal(disabled.status, 200); assert.equal(disabled.body.status, 'STARTING');
   assert.equal(disabled.body.retryAt, 0); assert.equal(disabled.body.nextCycleAt, 0);
 
-  const expired = await dispatch(server, '/api/status?chain=eth', { method: 'GET' });
+  // Once it joins the scan set, the same stale run reports DEGRADED, not RUNNING.
+  controls.value.enabledChains = ['bsc', 'sol'];
+  const expired = await dispatch(server, '/api/status?chain=sol', { method: 'GET' });
   assert.equal(expired.status, 200); assert.equal(expired.body.status, 'DEGRADED');
-  assert.equal(expired.body.lastSuccessAt, state.value.chainStates.eth.lastSuccessAt);
-
-  const fresh = await dispatch(server, '/api/status?chain=sol', { method: 'GET' });
-  assert.equal(fresh.status, 200); assert.equal(fresh.body.status, 'STARTING');
+  assert.equal(expired.body.lastSuccessAt, state.value.chainStates.sol.lastSuccessAt);
 
   const active = await dispatch(server, '/api/status?chain=bsc', { method: 'GET' });
   assert.equal(active.status, 200); assert.equal(active.body.status, 'RUNNING');
@@ -208,7 +208,7 @@ test('active-chain endpoint rejects a chain outside a multi-chain scan set', asy
 });
 
 test('public status and export omit unsupported legacy Arc and Stable scopes', async () => {
-  const supportedChains = ['sol', 'bsc', 'base', 'eth', 'robinhood'];
+  const supportedChains = ['sol', 'bsc'];
   const legacyScope = { status: 'RUNNING', candidates: [], outcomes: [] };
   const state = { value: { activeChain: 'bsc', status: 'RUNNING', supportedChains: [...supportedChains, 'arc', 'stable'],
     events: [{ type: 'SCAN', chain: 'bsc' }, { type: 'SCAN', chain: 'arc' }, { type: 'NOTICE' }],

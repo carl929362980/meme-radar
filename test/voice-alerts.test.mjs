@@ -129,16 +129,16 @@ test('continuous qualification and regular reaudits do not re-alert during the s
 test('server voice snapshot includes all enabled chains, excludes incomplete/legacy/held and leaks no raw data', () => {
   const make = chain => ({ ...row(), chain, deep: { chainPass: true, chartRisk: { pass: true, version: 1 } },
     auditHealth: { complete: true }, privateStuff: 'do-not-return', rawDiscovery: { confidential: true } });
-  const state = { activeChain: 'bsc', candidates: [make('bsc')], chainStates: { arc: { candidates: [make('arc')] } } };
-  let result = voiceSnapshot(state, ['bsc', 'arc', 'fake']);
-  assert.deepEqual(Object.keys(result.chains), ['bsc', 'arc']);
-  assert.equal(result.chains.arc[0].qualified, true);
+  const state = { activeChain: 'bsc', candidates: [make('bsc')], chainStates: { sol: { candidates: [make('sol')] } } };
+  let result = voiceSnapshot(state, ['bsc', 'sol', 'fake']);
+  assert.deepEqual(Object.keys(result.chains), ['bsc', 'sol']);
+  assert.equal(result.chains.sol[0].qualified, true);
   assert.doesNotMatch(JSON.stringify(result), /privateStuff|do-not-return|rawDiscovery/);
   state.candidates[0].auditHealth.complete = false;
-  state.chainStates.arc.candidates[0].deep.chartRisk.version = 0;
-  result = voiceSnapshot(state, ['bsc', 'arc']);
-  assert.equal(result.chains.bsc[0].qualified, false); assert.equal(result.chains.arc[0].qualified, false);
-  assert.equal(toPublicStatus({ activeChain: 'arc', candidates: state.chainStates.arc.candidates }).candidates[0].status, 'WAIT_RECHECK');
+  state.chainStates.sol.candidates[0].deep.chartRisk.version = 0;
+  result = voiceSnapshot(state, ['bsc', 'sol']);
+  assert.equal(result.chains.bsc[0].qualified, false); assert.equal(result.chains.sol[0].qualified, false);
+  assert.equal(toPublicStatus({ activeChain: 'sol', candidates: state.chainStates.sol.candidates }).candidates[0].status, 'WAIT_RECHECK');
 });
 
 test('production voice snapshot feeds the unified pool from fresh live rows without overriding a hard rejection', () => {

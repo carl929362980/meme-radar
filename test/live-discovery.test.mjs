@@ -17,6 +17,8 @@ const token = (id = 1, overrides = {}) => ({ address:'0x'+id.toString(16).padSta
   marketProvider:'AVE',chain:'bsc',market_cap:50000,liquidity:15000,launch_at:now/1000-1000,
   capturedAt:now,sourceUpdatedAt:now,expiresAt:now+30000,price:'1',volume_5m:1000,volume:1000,buys:10,sells:5,swaps:15,
   holder_count:100,smart_degen_count:3,rug_ratio:.1,bundler_rate:.1,rat_trader_amount_rate:.1,is_wash_trading:false,is_honeypot:0,...overrides });
+// Solana needs a base58 token address; the 0x fixture only validates on EVM chains.
+const SOL_ADDRESS = 'So11111111111111111111111111111111111111112';
 const options = provider => ({provider,now:()=>now,schedule:()=>({unref(){}}),cancel:()=>{}});
 const flushBackground = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
@@ -200,18 +202,18 @@ test('HTTP readers and the passive poll share one per-chain cache read and backg
 test('slow enrichment on one chain cannot hold another chain or publish into its snapshot', async t => {
   const jobs = new Map(), calls = [];
   const provider = { keyEpoch: 0, configured: async () => true,
-    live: async chain => ({ tokens: [token(1, { chain })], capturedAt: now }) };
+    live: async chain => ({ tokens: [token(1, { chain, address: chain === 'sol' ? SOL_ADDRESS : '0x' + '1'.repeat(40) })], capturedAt: now }) };
   const live = new LiveDiscovery({ ...options(provider), cacheOnly: true, overlayWaitMs: 0,
     marketOverlay: { enrich: (chain, rows) => { calls.push(chain); const job = deferred(); jobs.set(chain, { ...job, row: rows[0] }); return job.promise; } } });
   t.after(() => live.stop());
-  await Promise.all([live.readSnapshot('bsc'), live.readSnapshot('base')]);
-  assert.deepEqual(calls.sort(), ['base', 'bsc']);
-  jobs.get('base').resolve([overlayRow(jobs.get('base').row, now, { market_cap: 52_000 })]); await flushBackground();
-  assert.equal(live.snapshot('base').rows[0].marketCap, 52_000);
+  await Promise.all([live.readSnapshot('bsc'), live.readSnapshot('sol')]);
+  assert.deepEqual(calls.sort(), ['bsc', 'sol']);
+  jobs.get('sol').resolve([overlayRow(jobs.get('sol').row, now, { market_cap: 52_000 })]); await flushBackground();
+  assert.equal(live.snapshot('sol').rows[0].marketCap, 52_000);
   assert.equal(live.snapshot('bsc').rows[0].marketCap, 50_000);
   jobs.get('bsc').resolve([overlayRow(jobs.get('bsc').row, now, { market_cap: 53_000 })]); await flushBackground();
   assert.equal(live.snapshot('bsc').rows[0].marketCap, 53_000);
-  assert.equal(live.snapshot('base').rows[0].marketCap, 52_000);
+  assert.equal(live.snapshot('sol').rows[0].marketCap, 52_000);
 });
 
 test('a late overlay for an old cache input cannot replace the newer page, and retries stay rate bounded', async t => {

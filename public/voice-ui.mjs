@@ -36,8 +36,8 @@ $('voiceLanguage').value = voiceLanguage;
 const t = key => copy[key][Math.max(0, locales.indexOf(locale))];
 const ignored = row => {
   const marks = read('robinhoodRadarManualMarksV1', {});
-  const key = voiceKey(row), address = key.slice(key.indexOf(':') + 1);
-  return (marks[key] || (row.chain === 'robinhood' ? marks[address] : null))?.decision === 'ignored';
+  const key = voiceKey(row);
+  return marks[key]?.decision === 'ignored';
 };
 function paint() {
   $('voiceTitle').textContent = t('title'); $('voiceHelp').textContent = t('help');

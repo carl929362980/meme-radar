@@ -1079,7 +1079,7 @@ export class AveClient {
       throw error;
     }
   }
-  async discover(chain = 'robinhood', options = {}) {
+  async discover(chain = 'bsc', options = {}) {
     input(chain); const credential = this.#credential(), epoch = this.keyEpoch;
     this.#alive({ epoch, fingerprint: credential.fp, controller: new AbortController() });
     if (options.signal?.aborted) throw fail('ABORTED', 499);
@@ -1100,7 +1100,7 @@ export class AveClient {
     }
     return this.#subscribe(job, options.signal);
   }
-  async live(chain = 'robinhood', { refresh = true, ...options } = {}) {
+  async live(chain = 'bsc', { refresh = true, ...options } = {}) {
     if (refresh === false) {
       input(chain);
       if (options.signal?.aborted) throw fail('ABORTED', 499);
@@ -1113,7 +1113,7 @@ export class AveClient {
     const rows = await this.discover(chain, options);
     return { tokens: rows, capturedAt: this.lastDiscoveryHealth?.checkedAt ?? null, interval: null, coverage: 'trending_sample' };
   }
-  async audit(ca, nowSec = Math.floor(this.#now() / 1000), chain = 'robinhood', { shouldStopEarly, signal } = {}) {
+  async audit(ca, nowSec = Math.floor(this.#now() / 1000), chain = 'bsc', { shouldStopEarly, signal } = {}) {
     input(chain, ca); this.#credential(); const epoch = this.keyEpoch;
     const requested = new Set(['info']);
     const unknown = () => ({ ok: false, state: 'unverified', code: 'AVE_FIELD_UNVERIFIED', message: 'AVE 已核实只读接口未提供该审核证据' });
@@ -1165,7 +1165,7 @@ export class AveClient {
     // Fetching market data never refreshes the audit clock or creates a security pass.
     return auditMeta(partial, requested, this.#now());
   }
-  async priceAt(ca, targetAt, chain = 'robinhood', options = {}) {
+  async priceAt(ca, targetAt, chain = 'bsc', options = {}) {
     if (!Number.isFinite(targetAt) || targetAt <= 0 || targetAt > this.#now()) return null;
     const end = Math.min(Math.floor(this.#now() / 60000) * 60000, Math.ceil(targetAt / 60000) * 60000 + 60000);
     const result = await this.tokenKlines(chain, ca, { ...options, range: { from: end - 180000, to: end } });

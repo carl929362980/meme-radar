@@ -9,6 +9,8 @@ import { LiveDiscovery, normalizeLiveRows } from '../src/live-discovery.mjs';
 import { toPublicStatus } from '../src/server.mjs';
 
 const ca = n => '0x' + n.toString(16).padStart(40, '0'), CA = ca(1), POOL = ca(2);
+// Solana needs a base58 token address; the 0x fixtures only validate on EVM chains.
+const SOL_CA = 'So11111111111111111111111111111111111111112';
 const AT = 1800000000000, settings = { ...config, chain: 'bsc', maxDeepAuditsPerCycle: 1 };
 function row(at = AT, changes = {}) {
   const value = { address: CA, chain: 'bsc', marketProvider: 'AVE', symbol: 'MOCK', name: 'Mock',
@@ -365,12 +367,13 @@ test('production passive live polls pass refresh:false and do not invent a succe
 test('passive HTTP reads immediately hydrate each chain regardless of another tab focus', async () => {
   const calls = [], provider = { keyEpoch: 0, configured: async () => true,
     live: async (chain, options) => {
-      calls.push({ chain, options }); return { tokens: [row(AT, { chain })], capturedAt: AT - 1000 };
+      calls.push({ chain, options });
+      return { tokens: [row(AT, { chain, address: chain === 'sol' ? SOL_CA : CA })], capturedAt: AT - 1000 };
     } };
   const live = new LiveDiscovery({ ...liveOptions(provider), cacheOnly: true });
-  const a = await live.readSnapshot('bsc'), b = await live.readSnapshot('robinhood');
+  const a = await live.readSnapshot('bsc'), b = await live.readSnapshot('sol');
   assert.equal(a.rows.length, 1); assert.equal(b.rows.length, 1);
-  assert.equal(a.rows[0].chain, 'bsc'); assert.equal(b.rows[0].chain, 'robinhood');
+  assert.equal(a.rows[0].chain, 'bsc'); assert.equal(b.rows[0].chain, 'sol');
   assert.equal(a.lastSuccessAt, AT - 1000); assert.equal(b.lastSuccessAt, AT - 1000);
   assert.ok(calls.every(call => call.options.refresh === false));
   assert.equal((await live.readSnapshot('bsc')).rows[0].newAt, 0, 'baseline/cache read must not invent an arrival');

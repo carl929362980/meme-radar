@@ -3,6 +3,17 @@ import assert from 'node:assert/strict';
 import { config } from '../src/config.mjs';
 import { Scanner, screeningSummary } from '../src/scanner.mjs';
 
+// These cases exercise the shared AVE lane: how it rotates chains, defers the
+// ones a provider cannot confirm, and forecasts turns. That mechanism has to
+// hold for any chain pair, so the fixtures pin their own chain space instead of
+// inheriting whichever chains the running build happens to enable. `robinhood`
+// stays useful here because AVE reports it as undocumented, which is what the
+// recovery-priority assertions need to observe.
+const chainScopedConfig = Object.freeze({
+  ...config,
+  supportedChains: Object.freeze(['bsc', 'robinhood', 'eth', 'sol'])
+});
+
 function stateFixture({ activeChain, activeAttemptAt, otherChain, otherAttemptAt }) {
   const scope = attemptAt => ({
     candidates: [], rejected: [], auditQueue: [], outcomes: [], sourceHealth: {},
@@ -39,7 +50,7 @@ async function startOnce({ recoveryActive, headOnly = recoveryActive, activeChai
     provider: schedulerProvider(recoveryActive, headOnly),
     state,
     controls,
-    settings: { ...config, chain: activeChain, scanIntervalMs: 3_600_000 }
+    settings: { ...chainScopedConfig, chain: activeChain, scanIntervalMs: 3_600_000 }
   });
   const visits = [];
   scanner.cycle = async () => { visits.push(scanner.activeChain); };
@@ -92,7 +103,7 @@ test('Scanner.start hydrates durable recovery before selecting the first chain a
   const provider = schedulerProvider(false);
   provider.hydrate = async () => { hydrated = true; provider.snapshot = schedulerProvider(true).snapshot; };
   const scanner = new Scanner({ provider, state, controls,
-    settings: { ...config, chain: 'bsc', scanIntervalMs: 3_600_000 } });
+    settings: { ...chainScopedConfig, chain: 'bsc', scanIntervalMs: 3_600_000 } });
   const visits = [];
   scanner.cycle = async () => { visits.push(scanner.activeChain); };
   await scanner.start(); scanner.stop();
@@ -106,7 +117,7 @@ test('Scanner.start wakes at an existing recovery deadline without adding anothe
   const provider = schedulerProvider(true);
   provider.nextAllowedAt = Date.now() + 30_000;
   const scanner = new Scanner({ provider, state, controls,
-    settings: { ...config, chain: 'bsc', scanIntervalMs: 3_600_000 } });
+    settings: { ...chainScopedConfig, chain: 'bsc', scanIntervalMs: 3_600_000 } });
   const originalSetTimeout = globalThis.setTimeout, originalClearTimeout = globalThis.clearTimeout;
   let scheduled = 0;
   try {
@@ -126,7 +137,7 @@ test('Scanner.start waits for the normal AVE transport lane without entering a f
   const provider = schedulerProvider(false);
   provider.schedulerReadyAt = Date.now() + 30_000;
   const scanner = new Scanner({ provider, state, controls,
-    settings: { ...config, chain: 'bsc', scanIntervalMs: 3_600_000 } });
+    settings: { ...chainScopedConfig, chain: 'bsc', scanIntervalMs: 3_600_000 } });
   let cycles = 0;
   scanner.cycle = async () => { cycles++; };
   const originalSetTimeout = globalThis.setTimeout, originalClearTimeout = globalThis.clearTimeout;
@@ -146,12 +157,12 @@ test('Scanner.start waits for the normal AVE transport lane without entering a f
 test('multi-chain view can only switch among chains enabled for scanning', () => {
   const state = stateFixture({ activeChain: 'bsc', activeAttemptAt: 1, otherChain: 'robinhood', otherAttemptAt: 2 });
   const controls = { value: { enabledChains: ['bsc', 'robinhood'] } };
-  const scanner = new Scanner({ provider: schedulerProvider(false), state, controls, settings: { ...config, chain: 'bsc' } });
+  const scanner = new Scanner({ provider: schedulerProvider(false), state, controls, settings: { ...chainScopedConfig, chain: 'bsc' } });
 
   assert.deepEqual(scanner.switchChain('robinhood'), {
     activeChain: 'robinhood', pendingChain: '', queued: false
   });
-  assert.throws(() => scanner.switchChain('sol'), error =>
+  assert.throws(() => scanner.switchChain('eth'), error =>
     error?.code === 'CHAIN_NOT_ENABLED' && error?.statusCode === 409);
   assert.equal(scanner.activeChain, 'bsc');
   assert.deepEqual(controls.value.enabledChains, ['bsc', 'robinhood']);
@@ -163,7 +174,7 @@ test('shared five-minute lane forecasts chain turns, not a five-minute promise f
   state.value.chainStates.sol = { lastAttemptAt: 20 };
   const provider = schedulerProvider(false); provider.schedulerReadyAt = now + 300_000;
   const controls = { value: { enabledChains: ['bsc', 'eth', 'sol'] } };
-  const scanner = new Scanner({ provider, state, controls, settings: { ...config, scanIntervalMs: 300_000 } });
+  const scanner = new Scanner({ provider, state, controls, settings: { ...chainScopedConfig, scanIntervalMs: 300_000 } });
   const eth = scanner.scheduleSnapshot('eth', now), sol = scanner.scheduleSnapshot('sol', now), bsc = scanner.scheduleSnapshot('bsc', now);
   assert.equal(eth.sharedIntervalMs, 300_000); assert.equal(eth.nominalChainIntervalMs, 900_000);
   assert.equal(eth.selectedNextAttemptAt, now + 300_000);
@@ -179,7 +190,7 @@ test('forecast respects provider backoff and recovery scope without inventing de
   const state = stateFixture({ activeChain: 'bsc', activeAttemptAt: 30, otherChain: 'robinhood', otherAttemptAt: 10 });
   const provider = schedulerProvider(true); provider.nextAllowedAt = now + 900_000;
   const controls = { value: { enabledChains: ['bsc', 'robinhood'] } };
-  const scanner = new Scanner({ provider, state, controls, settings: config });
+  const scanner = new Scanner({ provider, state, controls, settings: chainScopedConfig });
   const ready = scanner.scheduleSnapshot('bsc', now), deferred = scanner.scheduleSnapshot('robinhood', now);
   assert.deepEqual(ready.eligibleChains, ['bsc']); assert.equal(ready.selectedNextAttemptAt, now + 900_000);
   assert.equal(ready.reason, 'backoff');
@@ -195,7 +206,7 @@ test('in-flight, auth-blocked and stopped states make no precise selected-chain 
   const now = 1_900_000_000_000;
   const state = stateFixture({ activeChain: 'bsc', activeAttemptAt: 30, otherChain: 'eth', otherAttemptAt: 10 });
   const provider = schedulerProvider(false), controls = { value: { enabledChains: ['bsc', 'eth'] } };
-  const scanner = new Scanner({ provider, state, controls, settings: config });
+  const scanner = new Scanner({ provider, state, controls, settings: chainScopedConfig });
   scanner.running = true;
   assert.equal(scanner.scheduleSnapshot('bsc', now).estimate, 'in_progress');
   assert.equal(scanner.scheduleSnapshot('bsc', now).selectedNextAttemptAt, null);
@@ -209,7 +220,7 @@ test('in-flight, auth-blocked and stopped states make no precise selected-chain 
 
 test('disabled deep audit rejects a valid manual request without creating a phantom queue', () => {
   const now = Date.now(), state = stateFixture({ activeChain: 'bsc', activeAttemptAt: 30, otherChain: 'eth', otherAttemptAt: 10 });
-  const scanner = new Scanner({ provider: schedulerProvider(false), state, settings: { ...config, maxDeepAuditsPerCycle: 0 } });
+  const scanner = new Scanner({ provider: schedulerProvider(false), state, settings: { ...chainScopedConfig, maxDeepAuditsPerCycle: 0 } });
   const row = { address: '0x' + '1'.repeat(40), chain: 'bsc', marketProvider: 'AVE', market_cap: 40000, liquidity: 10000,
     price: 1, volume_5m: 1000, launch_at: Math.floor(now / 1000) - 900, capturedAt: now, sourceUpdatedAt: now, expiresAt: now + 30000 };
   assert.deepEqual(scanner.enqueueReview('bsc', row), { accepted: false, reason: 'deep_audit_disabled' });
@@ -230,7 +241,7 @@ test('market screening summary counts tokens once per reason category, not safet
 test('switching to an unscanned or legacy chain cannot inherit another chain screening counts', () => {
   const state = stateFixture({ activeChain: 'bsc', activeAttemptAt: 30, otherChain: 'eth', otherAttemptAt: 10 });
   state.value.screening = { received: 100, checkedAt: 123 };
-  const scanner = new Scanner({ provider: schedulerProvider(false), state, settings: config });
+  const scanner = new Scanner({ provider: schedulerProvider(false), state, settings: chainScopedConfig });
   scanner.activateChain('eth', true);
   assert.equal(state.value.screening, null);
   scanner.activateChain('bsc', true);

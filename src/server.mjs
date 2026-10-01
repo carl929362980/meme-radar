@@ -9,7 +9,7 @@ import { AveError } from './ave-settings.mjs';
 import { activeLiveLeads } from './live-leads.mjs';
 
 const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
-const CHAIN_IDS = new Set(['sol', 'bsc', 'base', 'eth', 'robinhood', 'arc', 'stable']);
+const CHAIN_IDS = new Set(['sol', 'bsc']);
 const CHECK_FIELDS = [
   'openSource', 'ownerRenounced', 'lpLocked', 'notHoneypot', 'tax', 'rug',
   'concentration', 'dev', 'insider', 'bundler', 'sniper', 'wash', 'liquidity',
@@ -568,7 +568,7 @@ function publicOutcomeSummary(source = {}) {
 export function toPublicStatus(source = {}) {
   const status = text(source.status, 32) || 'STARTING';
   const requestedActiveChain = text(source.activeChain || source.policy?.chain, 32).toLowerCase();
-  const activeChain = CHAIN_IDS.has(requestedActiveChain) ? requestedActiveChain : 'robinhood';
+  const activeChain = CHAIN_IDS.has(requestedActiveChain) ? requestedActiveChain : 'bsc';
   const requestedPendingChain = text(source.pendingChain, 32).toLowerCase();
   const priorityMarketCap = Array.isArray(source.policy?.priorityMarketCap)
     ? source.policy.priorityMarketCap.slice(0, 2).map(value => finite(value))

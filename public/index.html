@@ -1476,10 +1476,7 @@
     };
     const chainCatalog = [
       { id: 'sol', label: 'Solana' },
-      { id: 'bsc', labelKey: 'chainBsc' },
-      { id: 'base', label: 'Base' },
-      { id: 'eth', labelKey: 'chainEth' },
-      { id: 'robinhood', labelKey: 'chainRobinhood' }
+      { id: 'bsc', labelKey: 'chainBsc' }
     ];
 
     function chainLabel(chain) {
@@ -1708,7 +1705,7 @@
     function markFor(address) {
       const normalized = addressIdentity(address);
       const chainKey = activeChain(lastData) + ':' + normalized;
-      return manualMarks[chainKey] || (activeChain(lastData) === 'robinhood' ? manualMarks[normalized] : null) || null;
+      return manualMarks[chainKey] || null;
     }
 
     function backendDisposition(row) {
@@ -1830,7 +1827,7 @@
     }
     function voiceSpotlightState(entry, now) {
       if (!entry || !voiceSpotlight) return 'voiceSpotlightMissing';
-      const key = voiceSpotlightKey(entry), mark = manualMarks[key] || (entry.chain === 'robinhood' ? manualMarks[addressIdentity(entry.address)] : null);
+      const key = voiceSpotlightKey(entry), mark = manualMarks[key] || null;
       if (mark && mark.decision === 'ignored') return 'voiceSpotlightIgnored';
       const rows = voiceSpotlightSnapshot && voiceSpotlightSnapshot.chains && voiceSpotlightSnapshot.chains[entry.chain];
       const current = Array.isArray(rows) ? rows.find(function (row) { return voiceSpotlightKey(row) === key; }) : null;
@@ -2069,7 +2066,7 @@
     }
 
     function activeChain(data) {
-      return String((data && (data.activeChain || (data.policy && data.policy.chain))) || 'robinhood').toLowerCase();
+      return String((data && (data.activeChain || (data.policy && data.policy.chain))) || 'bsc').toLowerCase();
     }
 
     function ensureVisibleChain(data) {
@@ -2530,13 +2527,12 @@
     function updateManualMark(address, decision) {
       const normalized = addressIdentity(address);
       const key = activeChain(lastData) + ':' + normalized;
-      const existing = manualMarks[key] || (activeChain(lastData) === 'robinhood' ? manualMarks[normalized] : null);
+      const existing = manualMarks[key] || null;
       if (existing && existing.decision === decision) delete manualMarks[key];
       else {
         const row = rowsCache.find(function (item) { return addressIdentity(item.address) === normalized; });
         manualMarks[key] = { decision: decision, at: Date.now(), reviewRevision: row && row.reviewRevision || '' };
       }
-      if (activeChain(lastData) === 'robinhood') delete manualMarks[normalized];
       writeStorage('robinhoodRadarManualMarksV1', manualMarks);
       render(lastData, true);
       showToast(decision === 'passed'

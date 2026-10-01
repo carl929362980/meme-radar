@@ -57,15 +57,15 @@ test('local store recovers last good JSON; unrecoverable data is not silently re
 });
 
 test('favorites and notes persist with exact Solana keys, bounded input and safe chain selection', t => {
-  const dir=temp(t); const controls = new RadarControls(dir, config.supportedChains,'robinhood');
+  const dir=temp(t); const controls = new RadarControls(dir, config.supportedChains,'bsc');
   const a='So11111111111111111111111111111111111111112', b='so11111111111111111111111111111111111111112';
   controls.annotate({chain:'sol',address:a,favorite:true,note:'hello'});
   controls.annotate({chain:'sol',address:b,favorite:false,note:'different'});
   assert.notEqual(tokenKey('sol',a),tokenKey('sol',b));
   assert.equal(Object.keys(controls.value.annotations).length,2);
-  controls.setChains(['sol','bsc','base']);
-  assert.deepEqual(new RadarControls(dir,config.supportedChains,'robinhood').value.enabledChains,['sol','bsc','base']);
-  assert.throws(() => controls.setChains(['sol','bsc','eth','base']));
+  controls.setChains(['sol','bsc']);
+  assert.deepEqual(new RadarControls(dir,config.supportedChains,'bsc').value.enabledChains,['sol','bsc']);
+  assert.throws(() => controls.setChains(['sol','bsc','eth']));
   assert.throws(() => controls.annotate({chain:'bsc',address:'../../x',favorite:true,note:'x'}));
 });
 

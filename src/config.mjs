@@ -10,12 +10,12 @@ function boundedInteger(value, fallback, minimum, maximum) {
 }
 
 export const config = Object.freeze({
-  chain: 'robinhood',
-  // Only expose chains with either published AVE support or a successful
-  // production observation. Arc/Stable were speculative slugs with no local
-  // success history or secondary safety coverage, so advertising them as
-  // usable made an empty tab look like a healthy chain.
-  supportedChains: Object.freeze(['sol', 'bsc', 'base', 'eth', 'robinhood']),
+  chain: 'bsc',
+  // This build is deliberately scoped to the two chains it is actually run
+  // against. Advertising a chain here is a promise that discovery and
+  // secondary safety both work on it; listing anything unmaintained makes an
+  // empty tab look like a healthy chain.
+  supportedChains: Object.freeze(['sol', 'bsc']),
   port: boundedInteger(process.env.RADAR_PORT, 3791, 1024, 65_535),
   scanIntervalMs: boundedInteger(process.env.SCAN_INTERVAL_MS, 300_000, 30_000, 30 * 60_000),
   // The public fast-feed build performs one hot-list request per turn. Deep
