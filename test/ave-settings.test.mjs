@@ -36,7 +36,10 @@ test('one AVE key reaches only the fixed Data GET; never becomes execution-ready
     assert.equal(f.settings.getKey(), 'one-fixture-key');
     assert.doesNotMatch(JSON.stringify(state), /one-fixture-key|privateKey/);
     const file = join(f.directory, 'ave-credentials.json');
-    assert.equal(statSync(file).mode & 0o777, 0o600);
+    // Credentials are owner-only on POSIX. NTFS carries no mode bits (chmod only
+    // toggles the read-only flag), so the copy is isolated by the directory ACL
+    // there and no mode can be asserted.
+    if (process.platform !== 'win32') assert.equal(statSync(file).mode & 0o777, 0o600);
     assert.deepEqual(JSON.parse(readFileSync(file)), { schema: 2, key: 'one-fixture-key' });
     const reboot = createAveSettings({ directory: f.directory, fetchImpl: f.fetchImpl });
     assert.equal(reboot.snapshot().configured, true); assert.equal(reboot.snapshot().data.status, 'untested');

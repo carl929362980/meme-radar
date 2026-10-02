@@ -6,6 +6,20 @@ import path from 'node:path';
 import { withLocalLock } from '../scripts/setup.mjs';
 
 const name = 'supervisor-3791';
+// A symbolic link is one of the attack shapes this suite must reject, but
+// creating one is privileged on Windows and some hardened runners refuse it
+// outright. Detect the capability once so the case is reported as not
+// applicable instead of as a failure.
+const SYMLINK_AVAILABLE = (() => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'radar-symlink-probe-'));
+  try {
+    const target = path.join(directory, 'target'), link = path.join(directory, 'link');
+    fs.writeFileSync(target, 'probe');
+    fs.symlinkSync(target, link);
+    return fs.lstatSync(link).isSymbolicLink();
+  } catch { return false; }
+  finally { fs.rmSync(directory, { recursive: true, force: true }); }
+})();
 const dead = () => { throw Object.assign(new Error('no process'), { code: 'ESRCH' }); };
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'radar-local-lock-'));
@@ -23,7 +37,10 @@ test('owner is complete and synced before atomic publication, and only the owned
   assert.equal(await withLocalLock(name, async () => {
     entered = true;
     assert.equal(fs.lstatSync(value.lock).isFile(), true);
-    assert.equal(fs.lstatSync(value.lock).nlink, 1);
+    // The temp file the owner was hard-linked from must be gone, which leaves a
+    // single link. Windows keeps reporting the pre-unlink count until the handle
+    // is released, so the directory listing below carries the same proof there.
+    if (process.platform !== 'win32') assert.equal(fs.lstatSync(value.lock).nlink, 1);
     assert.deepEqual(fs.readdirSync(value.runtime), [`${name}.lock`]);
     return 'owned';
   }, { ...value, fsImpl }), 'owned');
@@ -135,7 +152,8 @@ test('callback errors retain their meaning and a replaced lock is never deleted 
   assert.equal(fs.readFileSync(value.lock, 'utf8'), '902');
 });
 
-test('linked runtime paths and linked owners are rejected without following them', async t => {
+test('linked runtime paths and linked owners are rejected without following them',
+  { skip: SYMLINK_AVAILABLE ? false : 'symbolic links cannot be created in this environment' }, async t => {
   const value = fixture(t), outside = path.join(value.root, 'outside'); fs.mkdirSync(outside);
   fs.rmdirSync(value.runtime); fs.symlinkSync(outside, value.runtime);
   await assert.rejects(withLocalLock(name, () => {}, value), { code: 'RADAR_LOCK_UNSAFE' });

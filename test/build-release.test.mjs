@@ -4,8 +4,30 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { archiveFiles } from '../src/updater.mjs';
 import { buildRelease, collectReleaseSource, loadWindowsDonor, releaseFileNames } from '../scripts/build-release.mjs';
+
+// Packaging shells out to Info-ZIP and one whitelist case needs a real symbolic
+// link. Neither is universally available: a runner may deny child-process
+// plumbing (Info-ZIP also needs pipes to take its file list), Windows ships no
+// `zip`, and creating a link is privileged there. Each capability is probed
+// with the same stdio the case needs, so the affected cases are skipped with a
+// reason instead of failing for an environmental cause.
+const ZIP_AVAILABLE = (() => {
+  try { const probe = spawnSync('zip', ['-v'], { encoding: 'utf8' }); return !probe.error && probe.status === 0; }
+  catch { return false; }
+})();
+const SYMLINK_AVAILABLE = (() => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'radar-symlink-probe-'));
+  try {
+    const target = path.join(directory, 'target'), link = path.join(directory, 'link');
+    fs.writeFileSync(target, 'probe');
+    fs.symlinkSync(target, link);
+    return fs.lstatSync(link).isSymbolicLink();
+  } catch { return false; }
+  finally { fs.rmSync(directory, { recursive: true, force: true }); }
+})();
 
 const sha256 = value => crypto.createHash('sha256').update(value).digest('hex');
 
@@ -86,7 +108,8 @@ function fixture(t) {
   return { parent, root, donorPath, donorBytes, policy };
 }
 
-test('release builder creates deterministic v0.1.10 assets with fixed roots, checksums and executable modes', t => {
+test('release builder creates deterministic v0.1.10 assets with fixed roots, checksums and executable modes',
+  { skip: ZIP_AVAILABLE ? false : 'Info-ZIP is unavailable on this runner' }, t => {
   const value = fixture(t), first = path.join(value.parent, 'first'), second = path.join(value.parent, 'second');
   const one = buildRelease({ root: value.root, outDir: first, version: '0.1.10', windowsDonor: value.donorPath, donorPolicy: value.policy });
   const two = buildRelease({ root: value.root, outDir: second, version: '0.1.10', windowsDonor: value.donorPath, donorPolicy: value.policy });
@@ -161,12 +184,16 @@ test('release source blocks both schema-1 AVE keys including short trimmed crede
   }
 });
 
-test('release whitelist cannot approve private paths, traversal, aliases or linked source directories', t => {
+test('release whitelist cannot approve private paths, traversal or aliases', t => {
   for (const forbidden of ['.env.production', 'docs/.env.local', 'docs/source.bak', 'docs/api.key', '../outside', 'src/../outside', 'state/radar.json']) {
     const value = fixture(t);
     approve(value.root, [forbidden]);
     assert.throws(() => collectReleaseSource(value.root), /不安全或私密路径/);
   }
+});
+
+test('release whitelist cannot approve source directories reached through a link',
+  { skip: SYMLINK_AVAILABLE ? false : 'symbolic links cannot be created in this environment' }, t => {
   const linked = fixture(t);
   fs.mkdirSync(path.join(linked.parent, 'private-docs'));
   fs.writeFileSync(path.join(linked.parent, 'private-docs/notes.md'), 'not publishable');
@@ -193,7 +220,8 @@ test('AVE release builder rejects dependency metadata instead of silently produc
     windowsDonor: value.donorPath, donorPolicy: value.policy }), /不应包含第三方 npm 依赖/);
 });
 
-test('release builder refuses output inside source, any source-version mismatch and overwrite', t => {
+test('release builder refuses output inside source, any source-version mismatch and overwrite',
+  { skip: ZIP_AVAILABLE ? false : 'Info-ZIP is unavailable on this runner' }, t => {
   const value = fixture(t);
   assert.throws(() => buildRelease({ root: value.root, outDir: path.join(value.root, 'dist'), version: '0.1.10', windowsDonor: value.donorPath, donorPolicy: value.policy }), /源码树外/);
   for (const version of ['0.1.8', '0.1.11']) {

@@ -34,6 +34,34 @@ function applicationRoot(input) {
   if (value?.name !== 'meme-radar-open-source') fail('MIGRATION_APP', '所选目录不是 Meme雷达开源版；未读取其中的本机资料。');
   return fs.realpathSync(directory);
 }
+// The ledger lock is an owner record (`pid:token`), not an empty flag, so its
+// holder can be inspected instead of assumed. Mirrors the reclaim rules in
+// src/ave.mjs: only a provably live writer blocks the migration, and a legacy
+// empty lock is honored until it is provably ancient. The lock file itself is
+// never removed here, because the source directory is promised to stay intact.
+const LEDGER_LOCK_STALE_MS = 120_000;
+const LEDGER_LOCK_OWNER = /^([0-9]+):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+function assertLedgerReleased(state) {
+  const lock = path.join(state, 'ave-read-budget.lock');
+  let stat;
+  try { stat = fs.lstatSync(lock); } catch (error) { if (error.code === 'ENOENT') return; throw error; }
+  if (stat.isFile() && !stat.isSymbolicLink() && stat.size <= 128) {
+    let text = null;
+    try { text = fs.readFileSync(lock, 'utf8').trim(); } catch { /* Unreadable: fall through to the age check. */ }
+    const owner = text === null ? null : LEDGER_LOCK_OWNER.exec(text)?.[1];
+    if (owner !== undefined && owner !== null) {
+      let alive = true;
+      try { process.kill(Number(owner), 0); }
+      catch (error) { alive = error.code !== 'ESRCH'; } // Only ESRCH proves the writer is gone.
+      if (!alive || stat.mtimeMs + LEDGER_LOCK_STALE_MS <= Date.now()) return;
+    }
+  }
+  if (stat.mtimeMs + LEDGER_LOCK_STALE_MS > Date.now()) {
+    fail('MIGRATION_BUSY', '旧版额度账本仍有写入锁，请确认程序已关闭后再试。');
+  }
+}
+
 function assertStopped(root) {
   const runtime = path.join(root, '.runtime');
   if (!exists(runtime)) return;
@@ -64,7 +92,7 @@ export function migrateLocalState({ from, to = currentRoot, confirmedStopped = f
   const sourceState = path.join(source, 'state'), destinationState = path.join(destination, 'state');
   if (exists(destinationState)) fail('MIGRATION_EXISTS', '新目录已有 state，未覆盖任何资料；请使用尚未启动的新解压目录。');
   plainDirectory(sourceState); assertStopped(source); assertStopped(destination);
-  if (exists(path.join(sourceState, 'ave-read-budget.lock'))) fail('MIGRATION_BUSY', '旧版额度账本仍有写入锁，请确认程序已关闭后再试。');
+  assertLedgerReleased(sourceState);
   const snapshots = []; let bytes = 0;
   for (const name of MIGRATION_FILES) {
     const file = path.join(sourceState, name);

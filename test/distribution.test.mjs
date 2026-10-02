@@ -8,6 +8,14 @@ import { execFileSync } from 'node:child_process';
 import { dependenciesReady } from '../scripts/setup.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// This case runs the setup entry through a real child process and captures its
+// output. A hardened runner can refuse that plumbing (for example by denying
+// pipe creation), so probe with the same stdio the case needs and skip with a
+// reason there instead of failing for an environmental cause.
+const SPAWN_AVAILABLE = (() => {
+  try { execFileSync(process.execPath, ['-e', ''], { encoding: 'utf8' }); return true; }
+  catch { return false; }
+})();
 
 test('community distribution has platform launchers and excludes private runtime data', () => {
   for (const file of ['安装并启动.command', '安装并启动.bat', 'START-HERE-WINDOWS.bat', 'START-WINDOWS.bat', 'TEST-WINDOWS.bat', 'README-WINDOWS.txt', 'README.md', 'SECURITY.md',
@@ -65,7 +73,8 @@ test('community production entry uses only local AVE credentials and never loads
   assert.doesNotMatch(main, /(?:import[^;]+from\s*['"]\.\/gmgn|new\s+Gmgn|process\.env\.(?:GMGN|AVE)|saveGmgnKey:|getGmgnOnboarding:)/);
 });
 
-test('clean setup and doctor work offline without npm, installed modules, credentials or state', async t => {
+test('clean setup and doctor work offline without npm, installed modules, credentials or state',
+  { skip: SPAWN_AVAILABLE ? false : 'child processes are unavailable in this environment' }, async t => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'radar-setup-test-'));
   t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
   fs.mkdirSync(path.join(temporary, 'scripts'));

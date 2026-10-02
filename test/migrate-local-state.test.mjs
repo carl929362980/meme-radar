@@ -8,6 +8,24 @@ import { fileURLToPath } from 'node:url';
 import { MIGRATION_FILES, migrateLocalState, parseMigrationArgs } from '../scripts/migrate-local-state.mjs';
 
 const script = fileURLToPath(new URL('../scripts/migrate-local-state.mjs', import.meta.url));
+// The CLI cases need a real child process and the link cases need real symbolic
+// links. A hardened runner can block child processes outright, and creating a
+// link is privileged on Windows, so both capabilities are probed once and the
+// affected cases are reported as not applicable instead of as failures.
+const SPAWN_AVAILABLE = (() => {
+  try { const probe = spawnSync(process.execPath, ['-e', ''], { encoding: 'utf8' }); return !probe.error && probe.status === 0; }
+  catch { return false; }
+})();
+const SYMLINK_AVAILABLE = (() => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'radar-symlink-probe-'));
+  try {
+    const target = path.join(directory, 'target'), link = path.join(directory, 'link');
+    fs.writeFileSync(target, 'probe');
+    fs.symlinkSync(target, link);
+    return fs.lstatSync(link).isSymbolicLink();
+  } catch { return false; }
+  finally { fs.rmSync(directory, { recursive: true, force: true }); }
+})();
 function fixture(t) {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'radar-state-migration-'));
   t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
@@ -39,7 +57,9 @@ test('explicit local migration preserves exact key, cumulative budget, settings,
   for (const [name, text] of Object.entries(value.values)) {
     assert.equal(fs.readFileSync(path.join(value.from, 'state', name), 'utf8'), text);
     assert.equal(fs.readFileSync(path.join(value.to, 'state', name), 'utf8'), text);
-    assert.equal(fs.statSync(path.join(value.to, 'state', name)).mode & 0o777, 0o600);
+    // POSIX keeps migrated private state owner-only; NTFS has no mode bits for
+    // chmod to set, so the same file relies on its directory ACL there.
+    if (process.platform !== 'win32') assert.equal(fs.statSync(path.join(value.to, 'state', name)).mode & 0o777, 0o600);
   }
   assert.equal(fs.existsSync(path.join(value.to, '.env.production')), false);
   assert.equal(fs.existsSync(path.join(value.to, 'state', 'unrelated-private.json')), false);
@@ -49,6 +69,7 @@ test('explicit local migration preserves exact key, cumulative budget, settings,
 
 test('migration refuses overwrite, partial key-only migration, invalid JSON, active supervisors and linked source data', t => {
   for (const mode of ['existing', 'budget', 'corrupt', 'active', 'link', 'hardlink', 'unconfirmed']) {
+    if (mode === 'link' && !SYMLINK_AVAILABLE) continue; // Needs a real symbolic link.
     const value = fixture(t);
     if (mode === 'existing') fs.mkdirSync(path.join(value.to, 'state'));
     if (mode === 'budget') fs.unlinkSync(path.join(value.from, 'state/ave-read-budget.json'));
@@ -80,8 +101,10 @@ test('migration requires independent verified application directories and an exp
     { from: '/explicit/old', to: '/explicit/new', confirmedStopped: true });
 });
 
-test('migration recognizes atomic PID-file locks and rejects active, malformed or still-linked owners', t => {
+test('migration recognizes atomic PID-file locks and rejects active, malformed or still-linked owners',
+  { skip: SPAWN_AVAILABLE ? false : 'child processes are unavailable in this environment' }, t => {
   for (const mode of ['active', 'empty', 'hardlink', 'symlink', 'stopped']) {
+    if (mode === 'symlink' && !SYMLINK_AVAILABLE) continue; // Needs a real symbolic link.
     const value = fixture(t), runtime = path.join(value.from, '.runtime');
     fs.mkdirSync(runtime);
     const file = path.join(runtime, 'supervisor-3791.lock');
@@ -103,7 +126,8 @@ test('migration recognizes atomic PID-file locks and rejects active, malformed o
   }
 });
 
-test('migration CLI never prints credentials or malformed JSON in success or error output', t => {
+test('migration CLI never prints credentials or malformed JSON in success or error output',
+  { skip: SPAWN_AVAILABLE ? false : 'child processes are unavailable in this environment' }, t => {
   for (const corrupt of [false, true]) {
     const value = fixture(t), secret = 'SYNTHETIC_PRIVATE_ONLY_FOR_TEST';
     if (corrupt) fs.writeFileSync(path.join(value.from, 'state/ave-credentials.json'), secret);
@@ -113,4 +137,30 @@ test('migration CLI never prints credentials or malformed JSON in success or err
     assert.equal((child.stdout + child.stderr).includes(value.from), false);
     assert.equal((child.stdout + child.stderr).includes(value.to), false);
   }
+});
+
+test('ledger lock ownership decides whether an interrupted writer blocks the migration', t => {
+  const lockOf = value => path.join(value.from, 'state', 'ave-read-budget.lock');
+  const holder = pid => `${pid}:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\n`;
+  const age = (file, ms) => { const old = new Date(Date.now() - ms); fs.utimesSync(file, old, old); };
+
+  // A record naming a live writer blocks; the same record is retired by age,
+  // because the guarded section is milliseconds of local I/O.
+  const recent = fixture(t); fs.writeFileSync(lockOf(recent), holder(process.pid));
+  assert.throws(() => migrateLocalState(recent), { code: 'MIGRATION_BUSY' });
+  const ancient = fixture(t); fs.writeFileSync(lockOf(ancient), holder(process.pid)); age(lockOf(ancient), 300_000);
+  assert.equal(migrateLocalState(ancient).originalPreserved, true);
+
+  // A record naming a writer that is provably gone is ignored, and the source
+  // is left byte-for-byte untouched (the migration only ever copies).
+  const dead = fixture(t); fs.writeFileSync(lockOf(dead), holder(2147483647));
+  const before = fs.readFileSync(lockOf(dead), 'utf8');
+  assert.equal(migrateLocalState(dead).originalPreserved, true);
+  assert.equal(fs.readFileSync(lockOf(dead), 'utf8'), before);
+
+  // A legacy empty lock cannot name its holder, so only age retires it.
+  const legacyRecent = fixture(t); fs.writeFileSync(lockOf(legacyRecent), '');
+  assert.throws(() => migrateLocalState(legacyRecent), { code: 'MIGRATION_BUSY' });
+  const legacyAncient = fixture(t); fs.writeFileSync(lockOf(legacyAncient), ''); age(lockOf(legacyAncient), 300_000);
+  assert.equal(migrateLocalState(legacyAncient).originalPreserved, true);
 });

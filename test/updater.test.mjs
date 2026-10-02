@@ -7,6 +7,20 @@ import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { createUpdater, archiveFiles, compareVersions, releaseAssetName, verifyLocalRelease, runUpdateWorker, copyTree } from '../src/updater.mjs';
 
+// Copying private state must refuse a link, but creating one is privileged on
+// Windows and some hardened runners refuse it outright. Probe once so that case
+// is skipped with a reason instead of failing for an environmental cause.
+const SYMLINK_AVAILABLE = (() => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'radar-symlink-probe-'));
+  try {
+    const target = path.join(directory, 'target'), link = path.join(directory, 'link');
+    fs.writeFileSync(target, 'probe');
+    fs.symlinkSync(target, link);
+    return fs.lstatSync(link).isSymbolicLink();
+  } catch { return false; }
+  finally { fs.rmSync(directory, { recursive: true, force: true }); }
+})();
+
 const sha = data => crypto.createHash('sha256').update(data).digest('hex');
 const repo = 'nhovongoc0-max/meme-radar', current = '0.1.8', target = '0.1.9';
 const pkg = (version, dependency) => JSON.stringify({ name: 'meme-radar-open-source', version, private: true,
@@ -131,7 +145,8 @@ test('install verifies both release checksums, preserves live state, stages priv
   assert.equal(JSON.parse(fs.readFileSync(path.join(f.root, 'package.json'))).version, current);
   assert.ok(!JSON.stringify(result).includes(f.root)); assert.ok(!JSON.stringify(result).includes('PUBLIC_SYNTHETIC_KEY'));
   assert.equal(calls[0].options.env.AVE_API_KEY, undefined); assert.equal(calls[0].options.env.NODE_OPTIONS, undefined);
-  assert.equal(fs.statSync(plan.work).mode & 0o777, 0o700);
+  // Staged work is private on POSIX; NTFS has no mode bits for chmod to set.
+  if (process.platform !== 'win32') assert.equal(fs.statSync(plan.work).mode & 0o777, 0o700);
   await assert.rejects(updater.install({ version: target, confirm: 'INSTALL_UPDATE' }), { code: 'UPDATE_BUSY' });
 });
 test('corrupt digest, redirect to arbitrary host and changed dependencies fail without stopping or changing the original', async t => {
@@ -173,10 +188,16 @@ test('verified historical dependency installations migrate to zero dependencies 
     assert.equal(fs.readFileSync(path.join(plan.work, 'previous', name), 'utf8'), value);
   }
 });
-test('copying private state refuses symbolic links and preserves private file permissions', t => {
+test('copying private state preserves the contents and permissions of the credential file', t => {
   const f = fixture(t), out = path.join(f.parent, 'state-copy'); copyTree(path.join(f.root, 'state'), out, { privateData: true });
   assert.equal(fs.readFileSync(path.join(out, 'ave-credentials.json'), 'utf8'), 'PUBLIC_SYNTHETIC_KEY');
-  assert.equal(fs.statSync(path.join(out, 'ave-credentials.json')).mode & 0o777, 0o600);
+  // POSIX keeps the copy owner-only; NTFS relies on the directory ACL instead.
+  if (process.platform !== 'win32') assert.equal(fs.statSync(path.join(out, 'ave-credentials.json')).mode & 0o777, 0o600);
+});
+
+test('copying private state refuses symbolic links',
+  { skip: SYMLINK_AVAILABLE ? false : 'symbolic links cannot be created in this environment' }, t => {
+  const f = fixture(t);
   fs.symlinkSync(path.join(f.root, 'package.json'), path.join(f.root, 'state/not-a-key'));
   assert.throws(() => copyTree(path.join(f.root, 'state'), path.join(f.parent, 'bad-copy'), { privateData: true }));
 });
