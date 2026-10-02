@@ -7,6 +7,7 @@ import { tokenKey } from './local-store.mjs';
 import { CHART_RISK_VERSION, applyRiskExclusion } from './chart-risk.mjs';
 import { AveError } from './ave-settings.mjs';
 import { activeLiveLeads } from './live-leads.mjs';
+import { classifyTrack } from './tracking.mjs';
 
 const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const CHAIN_IDS = new Set(['sol', 'bsc']);
@@ -402,6 +403,58 @@ function publicRejected(row = {}) {
   };
 }
 
+// A tracked card is always a first sighting next to the latest observation of
+// the same fields. Both are projected verbatim and the change is left for the
+// page to render, so a card can never show a difference without its baseline.
+function publicTrackSnapshot(source = {}) {
+  return {
+    price: finiteOrNull(source.price),
+    marketCap: finiteOrNull(source.marketCap),
+    liquidity: finiteOrNull(source.liquidity),
+    holders: finiteOrNull(source.holders),
+    at: finite(source.at)
+  };
+}
+
+function publicTrackSignal(signal = {}) {
+  return { axis: text(signal.axis, 16), rung: finiteOrNull(signal.rung), value: finiteOrNull(signal.value), at: finite(signal.at) };
+}
+
+function publicTrack(row = {}) {
+  return {
+    chain: text(row.chain, 32),
+    address: text(row.address, 80),
+    symbol: text(row.symbol || '?', 30),
+    firstSeenAt: finite(row.firstSeenAt),
+    lastSeenAt: finite(row.lastSeenAt),
+    lastSignalAt: finite(row.lastSignalAt),
+    // The quadrant is a market-behaviour read, derived on projection so it
+    // always reflects the latest observation rather than a stored verdict.
+    quadrant: classifyTrack(row),
+    snapshot: publicTrackSnapshot(row.snapshot),
+    latest: publicTrackSnapshot(row.latest),
+    signals: Array.isArray(row.signals) ? row.signals.slice(0, 20).map(publicTrackSignal) : []
+  };
+}
+
+function publicTrackSummary(source = {}) {
+  const quadrants = source.quadrants || {};
+  return {
+    tracked: finite(source.tracked),
+    active: finite(source.active),
+    cooling: finite(source.cooling),
+    quadrants: {
+      POOL_PULLED: finite(quadrants.POOL_PULLED),
+      DISTRIBUTION: finite(quadrants.DISTRIBUTION),
+      BREAKOUT: finite(quadrants.BREAKOUT),
+      WATCH: finite(quadrants.WATCH)
+    },
+    recentSignals: Array.isArray(source.recentSignals) ? source.recentSignals.slice(0, 20).map(signal => ({
+      ...publicTrackSignal(signal), chain: text(signal.chain, 32), address: text(signal.address, 80), symbol: text(signal.symbol || '?', 30)
+    })) : []
+  };
+}
+
 function publicEvent(event = {}) {
   const type = text(event.type, 32);
   const code = AVE_PUBLIC_CODES.has(event.code) ? event.code : null;
@@ -606,6 +659,8 @@ export function toPublicStatus(source = {}) {
     sourceHealth: publicSourceHealth(source.sourceHealth),
     auditQueueStats: publicAuditQueueStats(source.auditQueueStats),
     outcomeSummary: publicOutcomeSummary(source.outcomeSummary),
+    track: Array.isArray(source.track) ? source.track.slice(0, 200).map(publicTrack) : [],
+    trackSummary: publicTrackSummary(source.trackSummary),
     policy: {
       chain: text(source.policy?.chain, 32),
       priorityMarketCap,

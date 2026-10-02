@@ -609,6 +609,35 @@
     .live-evidence { padding: 9px 0; border-top: 1px solid #29404a; color: #d9bd80; font-size: 14px; }
     .live-card .addr { overflow-wrap: anywhere; }
     .live-grid .empty { grid-column: 1 / -1; }
+    /* Tracking board. Every row states the first sighting, the latest
+       observation and the change between them, so a signal can always be
+       checked against its baseline instead of being taken on trust. */
+    .track-card { border: 1px solid #2d424c; border-radius: 10px; padding: 14px; background: #101b22; min-width: 0; display: grid; gap: 10px; }
+    .track-card.risk { border-color: #80535c; }
+    .track-card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .track-card-head strong { font-size: 20px; overflow-wrap: anywhere; }
+    .track-baseline { font-size: 14px; color: #a6babf; overflow-wrap: anywhere; }
+    .track-axes { display: grid; gap: 7px; }
+    .track-axis { display: grid; grid-template-columns: 78px minmax(0, 1fr) auto; gap: 10px; align-items: baseline; font-size: 14px; }
+    .track-axis small { color: #a6babf; }
+    .track-axis .pair { overflow-wrap: anywhere; }
+    .track-axis .delta { font-variant-numeric: tabular-nums; white-space: nowrap; color: #c7dff2; }
+    .track-axis .delta.flat { color: #6d838a; }
+    /* Up is red and down is green, per the local market convention. A risk
+       quadrant overrides the direction colour with the warning tone, because a
+       price that rises while the pool drains is not good news. */
+    .track-axis .delta.up { color: var(--red); }
+    .track-axis .delta.down { color: var(--green); }
+    .track-axis .delta.risk { color: var(--amber); }
+    .track-gate { font-size: 14px; white-space: nowrap; }
+    .track-cooling { color: var(--muted); }
+    .track-signals { border-top: 1px solid #29404a; padding-top: 8px; font-size: 14px; color: #d9bd80; }
+    /* Scoped to the card so the shared .live-tag rule cannot repaint a badge. */
+    .track-card .track-tag-breakout { color: #b6f2d8; background: #1d3b33; }
+    .track-card .track-tag-distribution { color: #ffd9cf; background: #43302c; }
+    .track-card .track-tag-pool { color: #ffd2d8; background: #432b32; }
+    .track-card .track-tag-watch { color: #c7dff2; background: #233540; }
+    .track-card .track-tag-gate { color: #b6f2d8; background: #1d3b33; }
     @keyframes liveArrival { from { background: #253c4a; } to { background: #101b22; } }
     @media (max-width: 1000px) { .live-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     @media (max-width: 620px) { .live-grid { grid-template-columns: 1fr; } }
@@ -747,6 +776,19 @@
       </div>
       <div id="liveMeta" class="live-meta"></div>
       <div id="liveRows" class="live-grid"><div class="empty" data-i18n="preparing">准备中</div></div>
+    </section>
+
+    <section id="trackPanel" class="panel" aria-labelledby="trackTitle">
+      <div class="live-heading">
+        <div><h2 id="trackTitle" data-i18n="trackTitle">追踪中</h2><small data-i18n="trackDisclaimer">首见对比 · 变化即信号</small></div>
+        <select id="trackSort" class="field" data-i18n-aria="trackSort" aria-label="追踪排序">
+          <option value="risk" selected data-i18n="trackSortRisk">风险优先</option>
+          <option value="change" data-i18n="trackSortChange">最近变化优先</option>
+          <option value="recent" data-i18n="trackSortRecent">最近出现优先</option>
+        </select>
+      </div>
+      <div id="trackMeta" class="live-meta"></div>
+      <div id="trackRows" class="live-grid"><div class="empty" data-i18n="trackEmpty">暂无追踪对象</div></div>
     </section>
 
     <section class="panel voice-panel" aria-label="Voice alerts">
@@ -937,6 +979,34 @@
       screenDetails: ['筛选详情','篩選詳情','Screening details','選別詳細','선별 세부 정보','تفاصيل الفرز'],
       liveBrief: ['{n} 个线索 · 采样 {time}','{n} 個線索 · 採樣 {time}','{n} leads · sampled {time}','{n}件 · 取得 {time}','{n}개 · 수집 {time}','{n} نتائج · التقطت {time}'],
       liveCap: ['市值','市值','Market cap','時価総額','시가총액','القيمة السوقية'],
+      trackTitle: ['追踪中','追蹤中','Tracking','追跡','추적 중','قيد التتبع'],
+      trackDisclaimer: ['首见对比 · 变化即信号','首見對比 · 變化即訊號','First-sighting comparison · the change is the signal','初回観測との比較 · 変化がシグナル','최초 관측 대비 · 변화가 신호','مقارنة بأول رصد · التغير هو الإشارة'],
+      trackSort: ['追踪排序','追蹤排序','Tracking order','追跡の並び','추적 정렬','ترتيب التتبع'],
+      trackSortRisk: ['风险优先','風險優先','Risk first','リスク優先','리스크 우선','الخطر أولاً'],
+      trackSortChange: ['最近变化优先','最近變化優先','Newest change first','最新の変化順','최근 변화 우선','أحدث تغير أولاً'],
+      trackSortRecent: ['最近出现优先','最近出現優先','Newest sighting first','最新の出現順','최근 등장 우선','أحدث ظهور أولاً'],
+      trackEmpty: ['暂无追踪对象；池子入队后自动开始','暫無追蹤對象；池子入隊後自動開始','Nothing tracked yet; a lead appears once it is queued','追跡対象はまだありません。入隊時に自動で始まります','아직 추적 대상이 없습니다. 대기열에 들어오면 자동 시작됩니다','لا يوجد تتبع بعد؛ يبدأ تلقائيًا عند دخول رمز إلى قائمة الانتظار'],
+      trackFirstSeen: ['首见','首見','First seen','初回観測','최초 관측','أول رصد'],
+      trackPrice: ['价格','價格','Price','価格','가격','السعر'],
+      trackHolders: ['持币','持幣','Holders','保有者','보유자','الحائزون'],
+      trackSignals: ['跨阈信号','跨閾訊號','Thresholds crossed','しきい値の突破','임계값 돌파','تجاوز العتبات'],
+      trackTagBreakout: ['真启动','真啟動','Breakout','ブレイクアウト','브레이크아웃','انطلاق'],
+      trackTagDistribution: ['出货警示','出貨警示','Distribution','分配売り','분배 경고','توزيع'],
+      trackTagPool: ['撤池前兆','撤池前兆','Pool pulled','流動性引き上げ','풀 인출 징후','سحب السيولة'],
+      trackTagWatch: ['观察','觀察','Watch','様子見','관망','مراقبة'],
+      trackBrief: ['{n} 个追踪 · 更新 {time}','{n} 個追蹤 · 更新 {time}','{n} tracked · updated {time}','{n}件を追跡 · 更新 {time}','{n}개 추적 · 갱신 {time}','{n} قيد التتبع · حُدّث {time}'],
+      trackAnchorPrice: ['首见价 {v}','首見價 {v}','first price {v}','初回価格 {v}','최초 가격 {v}','أول سعر {v}'],
+      trackAnchorCap: ['首见市值 {v}','首見市值 {v}','first cap {v}','初回時価総額 {v}','최초 시총 {v}','أول قيمة {v}'],
+      trackNoSignal: ['暂未跨阈','暫未跨閾','No threshold crossed yet','まだしきい値未突破','아직 임계값 미돌파','لم تُتجاوز أي عتبة بعد'],
+      trackSignalPrice: ['价格 {v} 达成','價格 {v} 達成','price {v} reached','価格 {v} 到達','가격 {v} 달성','بلغ السعر {v}'],
+      trackSignalMarketCap: ['市值破 {v}','市值破 {v}','cap broke {v}','時価総額 {v} 突破','시총 {v} 돌파','تجاوزت القيمة {v}'],
+      trackSignalLiquidity: ['流动性 {v}','流動性 {v}','liquidity {v}','流動性 {v}','유동성 {v}','السيولة {v}'],
+      trackSignalHolders: ['持币 {v}','持幣 {v}','holders {v}','保有者 {v}','보유자 {v}','الحائزون {v}'],
+      trackGatePassed: ['已过链上硬门','已過鏈上硬門','Chain gate passed','オンチェーン審査通過','온체인 심사 통과','اجتاز بوابة السلسلة'],
+      trackGatePending: ['未过链上硬门','未過鏈上硬門','Chain gate not cleared','オンチェーン審査未通過','온체인 심사 미통과','لم تجتز بوابة السلسلة'],
+      trackGateHint: ['合约安全性与市场行为分开显示，不合成可信度','合約安全性與市場行為分開顯示，不合成可信度','Contract safety is shown apart from market behaviour; they are never merged into one score','契約の安全性と市場行動は別々に表示され、1つのスコアに統合されません','계약 안전성과 시장 행동은 분리 표시되며 하나의 점수로 합치지 않습니다','تُعرض سلامة العقد منفصلة عن سلوك السوق ولا تُدمجان في درجة واحدة'],
+      trackCoolingTag: ['冷却','冷卻','Cooling','冷却中','냉각','تبريد'],
+      trackLiveTag: ['在榜','在榜','On board','掲載中','목록에 있음','مدرج'],
       liveLp: ['流动性','流動性','Liquidity','流動性','유동성','السيولة'],
       radarDisclaimer: ['自动筛选 · 观察线索，非安全保证','自動篩選 · 觀察線索，非安全保證','Automatic screening · Signals, not a safety guarantee','自動選別・安全性を保証しません','자동 필터링 · 안전 보장 아님','فحص تلقائي · إشارات وليست ضمانًا للأمان'],
       liveWarning: ['新候选窗口10分钟；掉出轮换页的最近线索最多展示30分钟，不语音、不核验。','新候選視窗10分鐘；掉出輪換頁的最近線索最多顯示30分鐘，不語音、不核驗。','New-candidate window: 10 min. Recent leads that rotate off-page may remain for up to 30 min, without voice alerts or review.','新規候補は10分間。巡回ページから外れた最近の候補は最長30分表示しますが、音声通知や審査の対象外です。','신규 후보 창은 10분입니다. 순환 페이지에서 빠진 최근 단서는 최대 30분 표시되지만 음성 알림과 검토 대상이 아닙니다.','نافذة المرشح الجديد 10 دقائق؛ قد تبقى الإشارات الحديثة التي خرجت من صفحة التناوب لمدة 30 دقيقة دون تنبيه صوتي أو مراجعة.'],
@@ -1511,6 +1581,17 @@
     let liveRefreshErrorChain = '';
     let liveFingerprint = '';
     const liveQueued = new Map();
+    // The tracking board keeps its own fingerprint, quadrant order and cooling
+    // window. They live here rather than beside renderTrack so the board can be
+    // re-rendered independently of the candidate radar.
+    let trackFingerprint = '';
+    const TRACK_TAG = { POOL_PULLED: 'trackTagPool', DISTRIBUTION: 'trackTagDistribution', BREAKOUT: 'trackTagBreakout', WATCH: 'trackTagWatch' };
+    // The map above carries i18n keys; the badge class names are kebab-cased.
+    const TRACK_CLASS = { POOL_PULLED: 'track-tag-pool', DISTRIBUTION: 'track-tag-distribution', BREAKOUT: 'track-tag-breakout', WATCH: 'track-tag-watch' };
+    const TRACK_RANK = { POOL_PULLED: 0, DISTRIBUTION: 1, BREAKOUT: 2, WATCH: 3 };
+    // How long a lead may go unobserved before its card is marked cooling. The
+    // row and its anchor are kept, only the freshness label changes.
+    const TRACK_COOLING_MS = 30 * 60000;
     let selectedChainsDirty = false;
     let noteTarget = null;
     let alertsEnabled = readStorage('memeRadarAlertsEnabledV1', false);
@@ -2430,6 +2511,114 @@
         + (query ? '<p><button class="mini-button" type="button" data-live-reset>' + escapeHtml(t('liveShowAll')) + '</button></p>' : '') + '</div>';
     }
 
+    // The tracking board pairs every change with the sighting it is measured
+    // from. A card that showed only the current value would collapse back into
+    // the candidate radar, and one that showed only the change would hide its
+    // baseline, so each axis renders "first seen → latest → change" as one row.
+    function renderTrack() {
+      const data = lastData;
+      const tracked = data && Array.isArray(data.track) ? data.track : [];
+      const now = Date.now();
+      // Contract safety and market behaviour are two verdicts, so the gate badge
+      // is looked up from the reviewed candidates and never folded into the
+      // quadrant. An address that has not cleared the gate simply says so.
+      const reviewed = new Set((rowsCache || []).filter(function (row) { return backendDisposition(row) === 'chain'; })
+        .map(function (row) { return String(row.chain || '').toLowerCase() + ':' + addressIdentity(row.address); }));
+      const mode = byId('trackSort').value;
+      const cards = tracked.map(function (row) {
+        return { row: row, first: row.snapshot || {}, last: row.latest || {},
+          gate: reviewed.has(String(row.chain || '').toLowerCase() + ':' + addressIdentity(row.address)),
+          cooling: now - number(row.lastSeenAt) > TRACK_COOLING_MS };
+      }).sort(function (a, b) {
+        if (mode === 'recent') return number(b.row.firstSeenAt) - number(a.row.firstSeenAt);
+        if (mode === 'change') return number(b.row.lastSignalAt) - number(a.row.lastSignalAt);
+        return TRACK_RANK[a.row.quadrant] - TRACK_RANK[b.row.quadrant]
+          || number(b.row.lastSignalAt) - number(a.row.lastSignalAt)
+          || number(b.row.firstSeenAt) - number(a.row.firstSeenAt);
+      });
+      const signature = JSON.stringify([cards.map(function (card) {
+        return [card.row.chain, card.row.address, card.row.quadrant, card.row.firstSeenAt, card.row.lastSeenAt,
+          card.row.lastSignalAt, card.first, card.last, card.gate, card.cooling, card.row.signals];
+      }), mode, currentLocale, data && data.generatedAt]);
+      if (signature === trackFingerprint) return;
+      trackFingerprint = signature;
+
+      const summary = data && data.trackSummary;
+      byId('trackMeta').textContent = summary
+        ? t('trackBrief', { n: formatCount(summary.tracked), time: data.generatedAt ? relativeTime(data.generatedAt) : t('noRecord') })
+          + ' · ' + ['POOL_PULLED', 'DISTRIBUTION', 'BREAKOUT', 'WATCH'].map(function (name) {
+            return t(TRACK_TAG[name]) + ' ' + formatCount(summary.quadrants ? summary.quadrants[name] : 0);
+          }).join(' · ')
+        : '';
+
+      const money = function (value) { return hasFiniteValue(value) ? formatMoney(value) : t('unknown'); };
+      const count = function (value) { return hasFiniteValue(value) ? Number(value).toLocaleString(currentLocale) : t('unknown'); };
+      const price = function (value) {
+        if (!hasFiniteValue(value)) return t('unknown');
+        const amount = Number(value);
+        return amount === 0 ? '$0' : '$' + amount.toPrecision(5);
+      };
+      const ratioOf = function (before, after) {
+        return hasFiniteValue(before) && hasFiniteValue(after) && Number(before) > 0 && Number(after) > 0
+          ? Number(after) / Number(before) : null;
+      };
+      const multiple = function (ratio) { return Number(ratio).toFixed(2) + 'x'; };
+      const percent = function (ratio) { return formatSignedPercent(Number(ratio) - 1); };
+
+      byId('trackRows').innerHTML = cards.map(function (card) {
+        const row = card.row, first = card.first, last = card.last;
+        const risk = row.quadrant === 'POOL_PULLED' || row.quadrant === 'DISTRIBUTION';
+        const tag = TRACK_TAG[row.quadrant] || 'trackTagWatch';
+        const tagClass = TRACK_CLASS[row.quadrant] || 'track-tag-watch';
+        const axisRow = function (label, firstValue, lastValue, render, format) {
+          const ratio = ratioOf(firstValue, lastValue);
+          const known = ratio !== null;
+          // A value that has not moved is neither rising nor falling, so it is
+          // left unmarked rather than coloured as a move in either direction.
+          const moved = known && Math.abs(ratio - 1) > 1e-9;
+          const rising = moved && ratio >= 1;
+          // A risk quadrant paints every change with the warning tone: a price
+          // rising while the pool drains is not the good news red implies.
+          const status = !moved ? 'flat' : risk ? 'risk' : rising ? 'up' : 'down';
+          return '<div class="track-axis"><small>' + escapeHtml(label) + '</small>'
+            + '<span class="pair mono">' + escapeHtml(render(firstValue) + ' → ' + render(lastValue)) + '</span>'
+            + '<span class="delta ' + status + '">' + escapeHtml(known ? format(ratio) + (moved ? ' ' + (rising ? '▲' : '▼') : '') : '—') + '</span></div>';
+        };
+        const axes = [
+          axisRow(t('trackPrice'), first.price, last.price, price, multiple),
+          axisRow(t('liveCap'), first.marketCap, last.marketCap, money, percent),
+          axisRow(t('liveLp'), first.liquidity, last.liquidity, money, percent),
+          axisRow(t('trackHolders'), first.holders, last.holders, count, percent)
+        ].join('');
+        const signalText = function (signal) {
+          const level = function () {
+            if (signal.axis === 'price' || signal.axis === 'holders') return multiple(number(signal.rung));
+            if (signal.axis === 'marketCap') return money(number(signal.rung));
+            if (signal.axis === 'liquidity') return formatSignedPercent(number(signal.rung));
+            return String(signal.rung);
+          };
+          const key = { price: 'trackSignalPrice', marketCap: 'trackSignalMarketCap', liquidity: 'trackSignalLiquidity', holders: 'trackSignalHolders' }[signal.axis];
+          return key ? t(key, { v: level() }) : signal.axis + ' ' + level();
+        };
+        const signals = (row.signals || []).slice(0, 4);
+        const signalBlock = signals.length
+          ? '<div class="track-signals"><strong>' + escapeHtml(t('trackSignals')) + '</strong>' + signals.map(function (signal) {
+            return '<div><span class="mono">' + escapeHtml(formatClock(signal.at)) + '</span> · ' + escapeHtml(signalText(signal)) + '</div>';
+          }).join('') + '</div>'
+          : '<div class="track-signals"><span class="muted">' + escapeHtml(t('trackNoSignal')) + '</span></div>';
+        const baseline = t('trackFirstSeen') + ' ' + escapeHtml(formatClock(row.firstSeenAt))
+          + ' · ' + escapeHtml(t('trackAnchorPrice', { v: price(first.price) }))
+          + ' · ' + escapeHtml(t('trackAnchorCap', { v: money(first.marketCap) }));
+        return '<article class="track-card' + (risk ? ' risk' : '') + '">'
+          + '<div class="track-card-head"><strong>' + escapeHtml(row.symbol || '?') + '</strong><span>'
+          + '<span class="live-tag ' + tagClass + '">' + escapeHtml(t(tag)) + '</span> '
+          + '<span class="live-tag ' + (card.gate ? 'track-tag-gate' : 'track-tag-watch') + ' track-gate" title="' + escapeHtml(t('trackGateHint')) + '">' + escapeHtml(t(card.gate ? 'trackGatePassed' : 'trackGatePending')) + '</span></span></div>'
+          + '<div class="track-baseline">' + baseline + (card.cooling ? ' · <span class="track-cooling">' + escapeHtml(t('trackCoolingTag')) + '</span>' : '') + '</div>'
+          + '<div class="track-axes">' + axes + '</div>'
+          + signalBlock + '</article>';
+      }).join('') || '<div class="empty">' + escapeHtml(t('trackEmpty')) + '</div>';
+    }
+
     async function refreshLive() {
       renderLive();
       if (!liveEnabled || liveBusy || document.hidden || !lastData) return;
@@ -2491,6 +2680,7 @@
       renderScreening(data);
       renderTelemetry();
       renderLive();
+      renderTrack();
       if (shouldRenderCandidates) renderCandidates();
       else renderVoiceSpotlight();
     }
@@ -2738,6 +2928,7 @@
     byId('searchInput').addEventListener('input', renderCandidates);
     byId('liveSearch').addEventListener('input', renderLive);
     byId('liveSort').addEventListener('change', renderLive);
+    byId('trackSort').addEventListener('change', function () { trackFingerprint = ''; renderTrack(); });
     byId('liveAuto').addEventListener('change', function (event) {
       liveEnabled = event.target.checked; writeStorage('memeRadarLiveEnabledV1', liveEnabled); refreshLive();
     });

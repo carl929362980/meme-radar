@@ -5,6 +5,7 @@ import { discoveryScreen, deepScreen, knownRiskReasons, marketCap, createdAt } f
 import { socialGate } from './social.mjs';
 import { tokenInfoPrice } from './ave.mjs';
 import { collectOutcomeSamples, selectOutcomeJobs, outcomeCoverage, sampleRejected } from './outcomes.mjs';
+import { observeTracks, summarizeTracking } from './tracking.mjs';
 import { tokenKey } from './local-store.mjs';
 import { reconcileLiveLeads } from './live-leads.mjs';
 
@@ -65,7 +66,7 @@ const OUTCOME_SAMPLE_GRACE_MS = 5 * 60_000;
 const REQUIRED_CALIBRATION_WINDOWS = Object.freeze(['m30', 'h2', 'h24']);
 const CHAIN_SCOPE_KEYS = Object.freeze([
   'scanCount', 'discoveredCount', 'prequalifiedCount', 'candidates', 'rejected',
-  'auditQueue', 'auditQueueStats', 'liveLeads', 'outcomes', 'outcomeSummary', 'sourceHealth', 'screening',
+  'auditQueue', 'auditQueueStats', 'liveLeads', 'outcomes', 'outcomeSummary', 'track', 'trackSummary', 'sourceHealth', 'screening',
   'lastAttemptAt', 'lastSuccessAt', 'lastCompleteSuccessAt', 'lastCycleMs', 'retryAt', 'status', 'generatedAt', 'nextCycleAt'
 ]);
 const RESERVED_X_PATHS = new Set([
@@ -397,13 +398,15 @@ function scopeSnapshot(value) {
 function emptyScope() {
   return {
     scanCount: 0, discoveredCount: 0, prequalifiedCount: 0,
-    candidates: [], rejected: [], auditQueue: [], liveLeads: [], outcomes: [],
+    candidates: [], rejected: [], auditQueue: [], liveLeads: [], outcomes: [], track: [],
     auditQueueStats: { total: 0, retained: 0, due: 0, neverAudited: 0, waitingRecheck: 0, hardReject: 0, chainReview: 0, estimatedMinutes: 0 },
     outcomeSummary: {
       minimumSample: 50, calibrationReady: false,
       tracked: 0, completed5m: 0, completed15m: 0, completed30m: 0,
       completed1h: 0, completed2h: 0, completed6h: 0, completed24h: 0
     },
+    trackSummary: { tracked: 0, active: 0, cooling: 0,
+      quadrants: { POOL_PULLED: 0, DISTRIBUTION: 0, BREAKOUT: 0, WATCH: 0 }, recentSignals: [] },
     sourceHealth: {}, screening: null, lastAttemptAt: 0, lastSuccessAt: 0, lastCompleteSuccessAt: 0,
     lastCycleMs: 0, retryAt: 0
   };
@@ -680,6 +683,23 @@ export class Scanner {
         settings.outcomeRetentionMs,
         Math.max(OUTCOME_SAMPLE_GRACE_MS, num(settings.scanIntervalMs) * 2)
       );
+      // Tracking starts at queue arrival rather than at a passing review: a
+      // review gate that nothing clears must not make the board permanently
+      // empty, and a queued token is already known to carry live market facts.
+      // Every field comes from the trending row this scan already fetched, so
+      // this adds no provider request and cannot compete for the read budget.
+      let tracking = observeTracks(
+        prior.track,
+        auditable.map(({ row }) => ({
+          chain, address: row.address, symbol: row.symbol,
+          price: numberOrNull(row.price),
+          marketCap: numberOrNull(row.market_cap ?? row.marketCap),
+          liquidity: numberOrNull(row.liquidity),
+          holders: numberOrNull(row.holder_count ?? row.holders)
+        })),
+        startedAt,
+        { retentionMs: settings.trackRetentionMs, signalLimit: settings.trackSignalLimit }
+      );
       let events = prior.events || [];
       let lastAuditHealth = prior.sourceHealth?.lastAudit || null;
       let lastSecondaryHealth = prior.sourceHealth?.lastSecondary || null;
@@ -948,6 +968,8 @@ export class Scanner {
         auditQueueStats: queueStats(auditQueue, availableAddresses, now, settings),
         outcomes,
         outcomeSummary: summarizeOutcomes(outcomes),
+        track: tracking,
+        trackSummary: summarizeTracking(tracking, now, { coolingMs: settings.trackCoolingMs }),
         sourceHealth: { discovery: discoveryHealth, lastAudit: lastAuditHealth, lastSecondary: lastSecondaryHealth },
         xCapability: { available: false, mode: 'manual', reason: 'X由用户点击链接人工复核' },
         policy: prior.policy,

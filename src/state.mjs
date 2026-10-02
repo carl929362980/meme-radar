@@ -38,6 +38,12 @@ function defaultState() {
       tracked: 0, completed5m: 0, completed15m: 0, completed30m: 0,
       completed1h: 0, completed2h: 0, completed6h: 0, completed24h: 0
     },
+    // Tracking lives beside outcomes, never inside it: crossing thresholds is a
+    // different question from sampling fixed windows, and merging the two would
+    // change the cohort calibration is measured on.
+    track: [],
+    trackSummary: { tracked: 0, active: 0, cooling: 0,
+      quadrants: { POOL_PULLED: 0, DISTRIBUTION: 0, BREAKOUT: 0, WATCH: 0 }, recentSignals: [] },
     sourceHealth: {},
     events: []
   };
@@ -67,6 +73,7 @@ function migrateState(raw) {
     auditQueue: Array.isArray(raw.auditQueue) ? raw.auditQueue : [],
     liveLeads: cleanLeads(raw.liveLeads, activeChain),
     outcomes: Array.isArray(raw.outcomes) ? raw.outcomes : [],
+    track: Array.isArray(raw.track) ? raw.track : [],
     events: Array.isArray(raw.events) ? raw.events : []
   };
 }

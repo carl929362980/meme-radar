@@ -66,6 +66,11 @@ export const config = Object.freeze({
   liveLeadRetentionMs: 30 * 60_000,
   staleCandidateMs: 10 * 60_000,
   outcomeRetentionMs: 7 * 24 * 60 * 60_000,
+  // Tracking is a first-sighting comparison, so it is kept on its own retention
+  // clock instead of the outcome windows that calibration depends on.
+  trackRetentionMs: 7 * 24 * 60 * 60_000,
+  trackSignalLimit: 40,
+  trackCoolingMs: 30 * 60_000,
   stateDir: path.join(ROOT, 'state'),
   publicDir: path.join(ROOT, 'public')
 });
