@@ -57,6 +57,7 @@
     "src/server.mjs",
     "src/social.mjs",
     "src/state.mjs",
+    "src/tracking.mjs",
     "src/updater.mjs",
     "src/windows-proxy.mjs",
     "START-HERE-WINDOWS.bat",
