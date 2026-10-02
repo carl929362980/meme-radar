@@ -439,6 +439,78 @@ function mergedBudget(stored, memory, now) {
     blockedUntil: max('blockedUntil'), quotaUntil: max('quotaUntil'), nextRequestAt: max('nextRequestAt') };
 }
 
+// A forced kill or a crash must not leave the ledger permanently unusable, so
+// the lock content is an owner record instead of an empty file: an owner that
+// is provably gone (ESRCH) or a lock that is provably ancient is reclaimed
+// automatically, while a live owner is never displaced. The record holds only
+// the PID and a random token, never the key or any API payload.
+const LOCK_STALE_MS = 120_000;
+const LOCK_ATTEMPTS = 5;
+const LOCK_OWNER_MAX_BYTES = 128;
+const LOCK_OWNER = /^([0-9]+):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
+
+function processAlive(pid) {
+  try { process.kill(pid, 0); return true; }
+  // Only ESRCH proves that an owner is gone; permission and platform errors
+  // never do.
+  catch (error) { return error?.code !== 'ESRCH'; }
+}
+
+// Reads the current holder. `alive` stays null when the content is not a record
+// this version wrote: a legacy empty lock, a truncated write, or a foreign
+// file. Those are only ever reclaimed by age, never by a guessed owner.
+function readLock(lock) {
+  let stat;
+  try { stat = lstatSync(lock); } catch (error) { if (error?.code === 'ENOENT') return null; throw error; }
+  let text = null, fd;
+  if (stat.isFile() && !stat.isSymbolicLink() && stat.size <= LOCK_OWNER_MAX_BYTES) {
+    try {
+      fd = openSync(lock, constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
+      text = readFileSync(fd, 'utf8');
+    } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+    finally { if (fd !== undefined) closeSync(fd); }
+  }
+  const match = typeof text === 'string' ? LOCK_OWNER.exec(text.trim()) : null;
+  return { stat, text, alive: match ? processAlive(Number(match[1])) : null };
+}
+
+// Two independent proofs of staleness. The age bound is far beyond the
+// millisecond critical section below, so it only ever fires for a holder that
+// is wedged or already dead.
+const lockStale = held => held.alive === false || held.stat.mtimeMs + LOCK_STALE_MS <= Date.now();
+
+// Fails closed: returns the held token, or null when the lock belongs to a live
+// owner (or to a peer that is reclaiming it right now).
+function claimLock(lock) {
+  for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt++) {
+    let fd;
+    try { fd = openSync(lock, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600); }
+    catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+      const held = readLock(lock);
+      if (!held) continue;                        // Released meanwhile: race for it again.
+      if (!lockStale(held)) return null;          // A live owner always keeps its lock.
+      const verifier = readLock(lock);            // Never remove a record that changed meanwhile.
+      if (!verifier || verifier.text !== held.text) return null;
+      try { unlinkSync(lock); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+      continue;
+    }
+    const token = randomUUID();
+    try { writeFileSync(fd, `${process.pid}:${token}\n`); fsyncSync(fd); }
+    catch (error) { closeSync(fd); try { unlinkSync(lock); } catch { /* Nothing else owns this path yet. */ } throw error; }
+    closeSync(fd);
+    return token;
+  }
+  return null;
+}
+
+// Only the exact record this transaction wrote is released, so a lock that was
+// reclaimed and re-acquired meanwhile is never deleted by its predecessor.
+function releaseLock(lock, token) {
+  const held = readLock(lock);
+  if (held && held.text?.trim() === `${process.pid}:${token}`) unlinkSync(lock);
+}
+
 // Contains only aggregate CU/cooldown counters, never the key or API payloads.
 // A fail-closed exclusive lock makes each update atomic across local processes.
 export function createAveBudgetStore(directory) {
@@ -446,11 +518,12 @@ export function createAveBudgetStore(directory) {
   const folder = resolve(directory), file = join(folder, 'ave-read-budget.json'), lock = join(folder, 'ave-read-budget.lock');
   return {
     transact(update) {
-      let fd, temporary;
+      let temporary, token;
       try {
         mkdirSync(folder, { recursive: true, mode: 0o700 });
         if (!lstatSync(folder).isDirectory() || lstatSync(folder).isSymbolicLink()) throw fail('BUDGET_STORE', 503);
-        fd = openSync(lock, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
+        token = claimLock(lock);
+        if (token === null) throw fail('BUDGET_STORE', 503);
         let previous = null;
         try {
           const stat = lstatSync(file);
@@ -470,7 +543,7 @@ export function createAveBudgetStore(directory) {
       } catch (error) { if (error instanceof AveError) throw error; throw fail('BUDGET_STORE', 503); }
       finally {
         if (temporary) try { unlinkSync(temporary); } catch { /* Best effort for this owned temp only. */ }
-        if (fd !== undefined) { closeSync(fd); try { unlinkSync(lock); } catch { /* Left-over lock remains fail-closed. */ } }
+        if (token !== undefined) try { releaseLock(lock, token); } catch { /* Left-over lock remains fail-closed. */ }
       }
     }
   };
