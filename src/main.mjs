@@ -7,6 +7,7 @@ import { createAveSettings } from './ave-settings.mjs';
 import { RadarState } from './state.mjs';
 import { Scanner } from './scanner.mjs';
 import { DexBatchMarketOverlay, SecondaryValidator } from './secondary.mjs';
+import { GoPlusReader } from './goplus.mjs';
 import { createServer, toPublicStatus } from './server.mjs';
 import { RadarControls } from './local-store.mjs';
 import { LiveDiscovery } from './live-discovery.mjs';
@@ -65,7 +66,16 @@ if (state.value.scanProvider !== 'AVE') {
   state.value.scanProvider = 'AVE'; state.save();
 }
 const controls = new RadarControls(config.stateDir, config.supportedChains, state.value.activeChain || config.chain);
-scanner = new Scanner({ provider: market, secondary: new SecondaryValidator(), state, controls, sharedRequestIntervalMs });
+scanner = new Scanner({ provider: market,
+  secondary: new SecondaryValidator(),
+  // Optional enrichment for the tracking board: holder concentration and a
+  // contract verdict, neither of which is a market reading. A failure here must
+  // never be able to fail a scan, so the reader degrades to null throughout.
+  goplus: config.goplusLookupsPerCycle > 0
+    ? new GoPlusReader({ timeoutMs: config.goplusTimeoutMs, cacheMs: config.goplusCacheMs, maxPerCycle: config.goplusLookupsPerCycle })
+    : null,
+  state, controls, sharedRequestIntervalMs
+});
 const liveDiscovery = new LiveDiscovery({ provider: market, cacheOnly: true, marketOverlay: new DexBatchMarketOverlay() });
 const version = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
 

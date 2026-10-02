@@ -71,6 +71,15 @@ export const config = Object.freeze({
   trackRetentionMs: 7 * 24 * 60 * 60_000,
   trackSignalLimit: 40,
   trackCoolingMs: 30 * 60_000,
+  // Holder concentration and a contract-safety verdict come from GoPlus, a
+  // separate provider with its own ceiling. Measured: ~30 requests per rolling
+  // minute, and the throttle arrives as HTTP 200 with body {code:4029}, not as
+  // a 429. Reads are spent only on leads the board already follows, capped per
+  // cycle so enrichment can never crowd out discovery, and cached so a ten
+  // minute refresh is enough for a reading that moves this slowly.
+  goplusLookupsPerCycle: boundedInteger(process.env.GOPLUS_LOOKUPS_PER_CYCLE, 8, 0, 40),
+  goplusCacheMs: 10 * 60_000,
+  goplusTimeoutMs: 12_000,
   stateDir: path.join(ROOT, 'state'),
   publicDir: path.join(ROOT, 'public')
 });

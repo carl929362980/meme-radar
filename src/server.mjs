@@ -412,6 +412,23 @@ function publicTrackSnapshot(source = {}) {
     marketCap: finiteOrNull(source.marketCap),
     liquidity: finiteOrNull(source.liquidity),
     holders: finiteOrNull(source.holders),
+    // Holder concentration as a fraction. Zero is a real reading ("widely held")
+    // and null means the provider never returned a distribution, so the two are
+    // kept distinct all the way to the page.
+    top10Rate: finiteOrNull(source.top10Rate),
+    at: finite(source.at)
+  };
+}
+
+// The contract verdict is projected as its own badge and never folded into the
+// quadrant: a safety read and a price-behaviour read answer different questions,
+// and blending them would let a clean contract make a dumb chart look sound.
+function publicTrackRisk(source) {
+  if (!source || typeof source !== 'object') return null;
+  const verdict = ['FATAL', 'NO_FATAL_FLAGS', 'UNKNOWN'].includes(source.verdict) ? source.verdict : 'UNKNOWN';
+  return {
+    verdict,
+    reasons: Array.isArray(source.reasons) ? source.reasons.slice(0, 8).map(reason => text(reason, 32)).filter(Boolean) : [],
     at: finite(source.at)
   };
 }
@@ -431,6 +448,7 @@ function publicTrack(row = {}) {
     // The quadrant is a market-behaviour read, derived on projection so it
     // always reflects the latest observation rather than a stored verdict.
     quadrant: classifyTrack(row),
+    risk: publicTrackRisk(row.risk),
     snapshot: publicTrackSnapshot(row.snapshot),
     latest: publicTrackSnapshot(row.latest),
     signals: Array.isArray(row.signals) ? row.signals.slice(0, 20).map(publicTrackSignal) : []
@@ -443,6 +461,7 @@ function publicTrackSummary(source = {}) {
     tracked: finite(source.tracked),
     active: finite(source.active),
     cooling: finite(source.cooling),
+    atRisk: finite(source.atRisk),
     quadrants: {
       POOL_PULLED: finite(quadrants.POOL_PULLED),
       DISTRIBUTION: finite(quadrants.DISTRIBUTION),
@@ -554,6 +573,21 @@ function publicSourceHealth(source = {}) {
         pausedCode: AVE_PUBLIC_CODES.has(source.discovery.enrichment.pausedCode) ? source.discovery.enrichment.pausedCode : null,
         pausedUntil: nonnegative(source.discovery.enrichment.pausedUntil),
         errorCount: Array.isArray(source.discovery.enrichment.errors) ? source.discovery.enrichment.errors.length : 0 } } : {})
+    };
+  }
+  // Enrichment health, so a throttled fifth axis is visible rather than looking
+  // like a lead that simply had nothing to report.
+  if (source.goplus && typeof source.goplus === 'object') {
+    result.goplus = {
+      reads: nonnegative(source.goplus.reads),
+      cached: nonnegative(source.goplus.cached),
+      throttled: nonnegative(source.goplus.throttled),
+      failed: nonnegative(source.goplus.failed),
+      usedThisCycle: nonnegative(source.goplus.usedThisCycle),
+      maxPerCycle: nonnegative(source.goplus.maxPerCycle),
+      cooling: source.goplus.cooling === true,
+      lastReadAt: finite(source.goplus.lastReadAt),
+      lastErrorCode: text(source.goplus.lastErrorCode, 32)
     };
   }
   if (source.lastAudit && typeof source.lastAudit === 'object') {

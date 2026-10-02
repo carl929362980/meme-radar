@@ -410,22 +410,29 @@ function findGoPlusRecord(payload, tokenAddress, chain) {
   return null;
 }
 
-function parseGoPlus(payload, { chain, tokenAddress }) {
-  if (!payload || Array.isArray(payload) || typeof payload !== 'object') {
-    const error = new Error('unexpected GoPlus JSON shape');
-    error.code = 'INVALID_JSON_SHAPE';
-    throw error;
+// Top-10 share of supply, as a fraction, read off the holder distribution
+// GoPlus returns. Both chains carry `percent` per holder (EVM keys the row by
+// `address`, Solana by `account`), so one formula covers both — verified equal
+// to balance/total_supply within rounding. Null when no distribution came back
+// at all, which is common for very fresh Solana mints, so a caller stays silent
+// instead of reading a missing list as zero concentration.
+function top10Share(record) {
+  const holders = Array.isArray(record?.holders) ? record.holders : null;
+  if (!holders || !holders.length) return null;
+  let sum = 0, seen = 0;
+  for (const holder of holders) {
+    const share = optionalRate(holder?.percent);
+    if (share === null) continue;
+    sum += share;
+    seen++;
   }
-  if (payload.code !== undefined && ![1, '1'].includes(payload.code)) {
-    const error = new Error('GoPlus rejected request');
-    error.code = 'UPSTREAM_REJECTED';
-    throw error;
-  }
-  const record = findGoPlusRecord(payload, tokenAddress, chain);
-  if (!record) return {
-    found: false,
-    security: { complete: false, verdict: 'UNKNOWN', fatal: [], unknownFields: ['tokenSecurity'], fields: {}, buyTax: null, sellTax: null }
-  };
+  return seen ? Math.min(sum, 1) : null;
+}
+
+// The rule verdict for one GoPlus record. An omitted risk flag is not evidence
+// of safety, so a field the provider leaves unknown keeps the verdict UNKNOWN
+// and the caller rechecks instead of treating it as a clean bill.
+function assessGoPlusRecord(record, chain) {
   const rules = chain === 'sol' ? SOL_SECURITY_RULES : EVM_SECURITY_RULES;
   const fields = {};
   const fatal = [];
@@ -447,21 +454,51 @@ function parseGoPlus(payload, { chain, tokenAddress }) {
   if (chain !== 'sol' && sellTax === null) {
     unknownFields.push('sellTax');
   }
-  // An omitted risk flag is not evidence of safety. Keep the source incomplete
-  // so callers can recheck instead of treating an unknown field as a clean bill.
   const complete = unknownFields.length === 0;
   return {
-    found: true,
-    security: {
-      complete,
-      verdict: fatal.length ? 'FATAL' : complete ? 'NO_FATAL_FLAGS' : 'UNKNOWN',
-      fatal,
-      unknownFields,
-      fields,
-      buyTax,
-      sellTax
-    }
+    complete,
+    verdict: fatal.length ? 'FATAL' : complete ? 'NO_FATAL_FLAGS' : 'UNKNOWN',
+    fatal,
+    unknownFields,
+    fields,
+    buyTax,
+    sellTax
   };
+}
+
+// Pure: everything worth knowing about one already-located GoPlus record, with
+// no transport attached. Exported so a second reader (the tracking enrichment)
+// reuses these exact rule tables instead of drifting away from them.
+export function summarizeGoPlusRecord(record, chain) {
+  return { security: assessGoPlusRecord(record, cleanString(chain, 24).toLowerCase()), top10Rate: top10Share(record) };
+}
+
+// Throttling arrives in the body, not the status line: GoPlus answers HTTP 200
+// with {code:4029,"too many requests"}. The error `code` stays UPSTREAM_REJECTED
+// for existing callers; `rateLimited` is what lets a caller back off rather
+// than retry straight into the same ceiling.
+const GO_PLUS_RATE_LIMIT_CODE = 4029;
+
+function parseGoPlus(payload, { chain, tokenAddress }) {
+  if (!payload || Array.isArray(payload) || typeof payload !== 'object') {
+    const error = new Error('unexpected GoPlus JSON shape');
+    error.code = 'INVALID_JSON_SHAPE';
+    throw error;
+  }
+  if (payload.code !== undefined && ![1, '1'].includes(payload.code)) {
+    const error = new Error('GoPlus rejected request');
+    error.code = 'UPSTREAM_REJECTED';
+    error.statusCode = payload.code;
+    error.rateLimited = Number(payload.code) === GO_PLUS_RATE_LIMIT_CODE;
+    throw error;
+  }
+  const record = findGoPlusRecord(payload, tokenAddress, chain);
+  if (!record) return {
+    found: false,
+    top10Rate: null,
+    security: { complete: false, verdict: 'UNKNOWN', fatal: [], unknownFields: ['tokenSecurity'], fields: {}, buyTax: null, sellTax: null }
+  };
+  return { found: true, ...summarizeGoPlusRecord(record, chain) };
 }
 
 function firstNumber(...values) {
@@ -562,6 +599,10 @@ export class SecondaryValidator {
     const dexSupported = Boolean(dexChainId);
     const market = emptyMarket();
     let security = { complete: false, verdict: 'UNSUPPORTED', fatal: [], unknownFields: ['tokenSecurity'], fields: {}, buyTax: null, sellTax: null };
+    // Holder concentration rides along with the GoPlus read, so the tracking
+    // board gets its fifth axis without a second request. Null means "not
+    // observed", never "zero".
+    let top10Rate = null;
     const sources = {
       dexScreener: sourceState(dexSupported ? 'PENDING' : 'UNSUPPORTED'),
       goPlus: sourceState(goPlusSupported ? 'PENDING' : 'UNSUPPORTED')
@@ -570,7 +611,7 @@ export class SecondaryValidator {
     if ((dexSupported || goPlusSupported) && !validAddress(address, normalizedChain)) {
       if (dexSupported) sources.dexScreener = sourceState('ERROR', { errorCode: 'INVALID_ADDRESS' });
       if (goPlusSupported) sources.goPlus = sourceState('ERROR', { errorCode: 'INVALID_ADDRESS' });
-      return { status: 'DEGRADED', complete: false, checkedAt: this.now(), chain: normalizedChain, tokenAddress: address, sources, market, security, conflicts: [] };
+      return { status: 'DEGRADED', complete: false, checkedAt: this.now(), chain: normalizedChain, tokenAddress: address, sources, market, security, top10Rate: null, conflicts: [] };
     }
 
     const dexUrl = dexSupported ? `https://api.dexscreener.com/token-pairs/v1/${dexChainId}/${encodeURIComponent(address)}` : '';
@@ -590,13 +631,14 @@ export class SecondaryValidator {
     if (goPlusResult) {
       sources.goPlus = goPlusResult.source;
       security = goPlusResult.security;
+      top10Rate = goPlusResult.top10Rate ?? null;
     }
     const conflicts = buildConflicts(primary, market, security, this.conflictThresholds);
     const complete = sources.dexScreener.status === 'OK' && sources.goPlus.status === 'OK'
       && market.complete && security.complete;
     return {
       status: complete ? 'COMPLETE' : 'DEGRADED', complete, checkedAt: this.now(),
-      chain: normalizedChain, tokenAddress: address, sources, market, security, conflicts
+      chain: normalizedChain, tokenAddress: address, sources, market, security, top10Rate, conflicts
     };
   }
 
@@ -614,11 +656,12 @@ export class SecondaryValidator {
     try {
       const payload = await requestJson(this.fetchImpl, url, this);
       const parsed = parseGoPlus(payload, context);
-      return { source: sourceState(parsed.found ? 'OK' : 'NO_DATA'), security: parsed.security };
+      return { source: sourceState(parsed.found ? 'OK' : 'NO_DATA'), security: parsed.security, top10Rate: parsed.top10Rate };
     } catch (error) {
       return {
         source: sourceState('ERROR', { errorCode: errorCode(error) }),
-        security: { complete: false, verdict: 'UNKNOWN', fatal: [], unknownFields: ['tokenSecurity'], fields: {}, buyTax: null, sellTax: null }
+        security: { complete: false, verdict: 'UNKNOWN', fatal: [], unknownFields: ['tokenSecurity'], fields: {}, buyTax: null, sellTax: null },
+        top10Rate: null
       };
     }
   }

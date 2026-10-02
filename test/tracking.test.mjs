@@ -58,23 +58,53 @@ test('ratio and shift axes are measured against the first sighting', () => {
   assert.ok(records[0].signals.some(s => s.id === 'liquidity:-0.3'), 'liquidity being pulled is the other direction of the same axis');
 });
 
-test('every shipped axis is backed by the discovery row, so none is permanently silent', () => {
-  // The four axes are exactly the market facts an AVE trending row carries.
-  // A lead whose fields are all present must be able to fire all four.
-  assert.deepEqual(TRACK_AXES, ['price', 'marketCap', 'liquidity', 'holders']);
+test('the four market axes are backed by the discovery row, and the sparse one is backed by the provider', () => {
+  assert.deepEqual(TRACK_AXES, ['price', 'marketCap', 'liquidity', 'holders', 'top10']);
   let records = observeTracks([], [lead()], AT);
   records = observeTracks(records, [lead({ price: 0.0002, marketCap: 6_000_000, liquidity: 15_000, holders: 200 })], AT + 1000);
   const fired = new Set(records[0].signals.map(s => s.axis));
-  for (const axis of TRACK_AXES) assert.ok(fired.has(axis), axis + ' must be reachable from a trending row');
+  for (const axis of ['price', 'marketCap', 'liquidity', 'holders']) {
+    assert.ok(fired.has(axis), axis + ' must be reachable from a trending row alone');
+  }
+
+  // The fifth axis needs the holder distribution, which is why it is allowed to
+  // stay silent: it fires only once that reading actually arrives.
+  assert.equal(fired.has('top10'), false, 'concentration cannot fire without a distribution');
+  records = observeTracks([], [lead({ top10Rate: 0.2 })], AT);
+  assert.equal(records[0].signals.length, 0, 'a baseline reading is not itself a crossing');
+  records = observeTracks(records, [lead({ top10Rate: 0.35 })], AT + 1000);
+  assert.ok(records[0].signals.some(s => s.id === 'top10:0.1'), 'a ten-point rise in top-10 share is a signal');
+  records = observeTracks(records, [lead({ top10Rate: 0.1 })], AT + 2000);
+  assert.ok(records[0].signals.some(s => s.id === 'top10:-0.1'), 'and the fall is the same axis, other direction');
 });
 
 test('an axis that was never observable stays silent instead of guessing', () => {
-  const records = observeTracks([], [lead({ holders: null, liquidity: null })], AT);
+  const records = observeTracks([], [lead({ holders: null, liquidity: null, top10Rate: null })], AT);
   assert.deepEqual(records[0].snapshot,
-    { price: 0.0001, marketCap: 20_000, liquidity: null, holders: null, at: AT });
+    { price: 0.0001, marketCap: 20_000, liquidity: null, holders: null, top10Rate: null, at: AT });
   assert.equal(records[0].signals.length, 0);
-  assert.deepEqual(trackSnapshot({ price: 0, marketCap: null, liquidity: 5, holders: 0 }),
-    { price: null, marketCap: null, liquidity: 5, holders: null });
+  assert.deepEqual(trackSnapshot({ price: 0, marketCap: null, liquidity: 5, holders: 0, top10Rate: 0 }),
+    { price: null, marketCap: null, liquidity: 5, holders: null, top10Rate: 0 },
+    'zero concentration is a real reading, while a missing one is not');
+});
+
+test('a sparse axis claims its baseline from the first sighting that carries it', () => {
+  // The provider answers for some leads and not others, so an unlucky first
+  // cycle must not silence the axis for the lead's whole life.
+  let records = observeTracks([], [lead({ top10Rate: null })], AT);
+  assert.equal(records[0].snapshot.top10Rate, null);
+  records = observeTracks(records, [lead({ top10Rate: 0.25 })], AT + 1000);
+  assert.equal(records[0].snapshot.top10Rate, 0.25, 'the first observable sighting becomes the baseline');
+  assert.equal(records[0].signals.length, 0, 'establishing a baseline is not itself a crossing');
+
+  // ...and it is still measured from that later baseline, not the original one.
+  records = observeTracks(records, [lead({ top10Rate: 0.4 })], AT + 2000);
+  assert.ok(records[0].signals.some(s => s.id === 'top10:0.1'));
+
+  // Once the axis has fired, its baseline is frozen like any other.
+  const frozen = structuredClone(records[0].snapshot);
+  records = observeTracks(records, [lead({ top10Rate: 0.25 })], AT + 3000);
+  assert.deepEqual(records[0].snapshot, frozen);
 });
 
 test('the quadrant reads risk before opportunity', () => {
@@ -85,6 +115,30 @@ test('the quadrant reads risk before opportunity', () => {
     'a price climbing while pool depth shrinks is distribution into strength');
   assert.equal(classifyTrack({ snapshot, latest: { ...snapshot, price: 2, liquidity: 150 } }), 'BREAKOUT');
   assert.equal(classifyTrack({ snapshot, latest: { ...snapshot, price: 1.1, liquidity: 80 } }), 'WATCH');
+});
+
+test('distribution is reachable from concentration alone, so a chain without pool data is not left dead', () => {
+  const snapshot = { price: 1, marketCap: 100, liquidity: null, holders: 10, top10Rate: 0.2 };
+  // Pool depth unknown, but supply visibly gathering while price climbs.
+  assert.equal(classifyTrack({ snapshot, latest: { ...snapshot, price: 1.5, top10Rate: 0.35 } }), 'DISTRIBUTION');
+  // Neither reading available: concentration cannot assert it, so the weaker
+  // breakout rule applies rather than a distribution claim built on nothing.
+  assert.equal(classifyTrack({ snapshot: { ...snapshot, top10Rate: null }, latest: { ...snapshot, price: 1.5, top10Rate: null } }), 'BREAKOUT');
+  // Concentration rising while the price is flat is not distribution: nothing is
+  // being sold into strength yet.
+  assert.equal(classifyTrack({ snapshot, latest: { ...snapshot, price: 1.05, top10Rate: 0.35 } }), 'WATCH');
+});
+
+test('a fatal contract verdict is never forgotten', () => {
+  const risk = verdict => ({ verdict, reasons: verdict === 'FATAL' ? ['isHoneypot'] : [], at: AT });
+  let records = observeTracks([], [lead({ risk: risk('FATAL') })], AT);
+  assert.equal(records[0].risk.verdict, 'FATAL');
+
+  // A later read that could not resolve the flags must not launder the verdict.
+  records = observeTracks(records, [lead({ risk: risk('UNKNOWN') })], AT + 1000);
+  assert.equal(records[0].risk.verdict, 'FATAL', 'contracts do not stop being honeypots');
+  const summary = summarizeTracking(records, AT + 2000);
+  assert.equal(summary.atRisk, 1, 'and the risk count agrees');
 });
 
 test('the signal log is bounded and keeps the newest signal first', () => {

@@ -6,6 +6,7 @@ import { socialGate } from './social.mjs';
 import { tokenInfoPrice } from './ave.mjs';
 import { collectOutcomeSamples, selectOutcomeJobs, outcomeCoverage, sampleRejected } from './outcomes.mjs';
 import { observeTracks, summarizeTracking } from './tracking.mjs';
+import { goplusIdentity } from './goplus.mjs';
 import { tokenKey } from './local-store.mjs';
 import { reconcileLiveLeads } from './live-leads.mjs';
 
@@ -405,7 +406,7 @@ function emptyScope() {
       tracked: 0, completed5m: 0, completed15m: 0, completed30m: 0,
       completed1h: 0, completed2h: 0, completed6h: 0, completed24h: 0
     },
-    trackSummary: { tracked: 0, active: 0, cooling: 0,
+    trackSummary: { tracked: 0, active: 0, cooling: 0, atRisk: 0,
       quadrants: { POOL_PULLED: 0, DISTRIBUTION: 0, BREAKOUT: 0, WATCH: 0 }, recentSignals: [] },
     sourceHealth: {}, screening: null, lastAttemptAt: 0, lastSuccessAt: 0, lastCompleteSuccessAt: 0,
     lastCycleMs: 0, retryAt: 0
@@ -419,10 +420,13 @@ function addEvent(events, type, message, chain, data = {}) {
 }
 
 export class Scanner {
-  constructor({ provider, secondary = null, state, controls = null, settings = config, sharedRequestIntervalMs = 5 * 60_000 }) {
+  constructor({ provider, secondary = null, goplus = null, state, controls = null, settings = config, sharedRequestIntervalMs = 5 * 60_000 }) {
     this.provider = provider;
     this.cycleController = null;
     this.secondary = secondary;
+    // Optional tracking enrichment. Never required: a null reader simply means
+    // the board runs on the discovery row's own facts.
+    this.goplus = goplus;
     this.state = state;
     this.controls = controls;
     this.config = settings;
@@ -438,6 +442,35 @@ export class Scanner {
     this.requestedReviews = new Map();
     this.state.value.activeChain = this.activeChain;
     this.state.value.supportedChains = this.supportedChains;
+  }
+
+  // The contract verdict the board shows, reduced to what a warning needs. Only
+  // the fatal set is meaningful here: an incomplete read stays UNKNOWN and must
+  // never be presented as a clean bill, so a missing read returns null and the
+  // card says "not assessed" instead of implying safety.
+  trackRiskOf(enrichment, at) {
+    const security = enrichment?.security;
+    if (!security) return null;
+    return {
+      verdict: security.verdict || 'UNKNOWN',
+      reasons: (security.fatal || []).map(row => row.field).filter(Boolean),
+      at
+    };
+  }
+
+  // Best-effort by construction: a throttled or failing provider yields an empty
+  // map and the board simply shows fewer axes. The reader's own per-cycle cap and
+  // cache are what keep this bounded, so nothing here reasons about the upstream
+  // ceiling. Cached leads are returned without spending budget, which is what
+  // lets coverage rotate across leads instead of pinning to the first few.
+  async enrichTrackedLeads(leads) {
+    if (!this.goplus) return new Map();
+    try {
+      this.goplus.beginCycle();
+      return await this.goplus.enrich(leads);
+    } catch {
+      return new Map();
+    }
   }
 
   schedulingPool(marketState = {}) {
@@ -686,17 +719,29 @@ export class Scanner {
       // Tracking starts at queue arrival rather than at a passing review: a
       // review gate that nothing clears must not make the board permanently
       // empty, and a queued token is already known to carry live market facts.
-      // Every field comes from the trending row this scan already fetched, so
-      // this adds no provider request and cannot compete for the read budget.
+      // The market fields come from the trending row this scan already fetched,
+      // so they add no provider request. Two extra facts — holder concentration
+      // and a contract verdict — are not market readings and are the only part
+      // that costs a request, so they are fetched for followed leads only,
+      // within a per-cycle cap, and a failure leaves them simply absent.
+      const followed = auditable.map(({ row }) => ({ chain, address: row.address }));
+      const enrichment = await this.enrichTrackedLeads(followed);
       let tracking = observeTracks(
         prior.track,
-        auditable.map(({ row }) => ({
-          chain, address: row.address, symbol: row.symbol,
-          price: numberOrNull(row.price),
-          marketCap: numberOrNull(row.market_cap ?? row.marketCap),
-          liquidity: numberOrNull(row.liquidity),
-          holders: numberOrNull(row.holder_count ?? row.holders)
-        })),
+        auditable.map(({ row }) => {
+          const extra = enrichment.get(goplusIdentity(chain, row.address));
+          return {
+            chain, address: row.address, symbol: row.symbol,
+            price: numberOrNull(row.price),
+            marketCap: numberOrNull(row.market_cap ?? row.marketCap),
+            liquidity: numberOrNull(row.liquidity),
+            holders: numberOrNull(row.holder_count ?? row.holders),
+            // Absent rather than zero when the provider did not answer, so the
+            // axis stays silent instead of inventing a flat reading.
+            top10Rate: extra?.top10Rate ?? null,
+            risk: this.trackRiskOf(extra, startedAt)
+          };
+        }),
         startedAt,
         { retentionMs: settings.trackRetentionMs, signalLimit: settings.trackSignalLimit }
       );
@@ -970,7 +1015,10 @@ export class Scanner {
         outcomeSummary: summarizeOutcomes(outcomes),
         track: tracking,
         trackSummary: summarizeTracking(tracking, now, { coolingMs: settings.trackCoolingMs }),
-        sourceHealth: { discovery: discoveryHealth, lastAudit: lastAuditHealth, lastSecondary: lastSecondaryHealth },
+        sourceHealth: { discovery: discoveryHealth, lastAudit: lastAuditHealth, lastSecondary: lastSecondaryHealth,
+          // Reported so a throttled enrichment is visible instead of silently
+          // producing cards with fewer axes. Optional: absent when disabled.
+          ...(this.goplus ? { goplus: this.goplus.snapshot() } : {}) },
         xCapability: { available: false, mode: 'manual', reason: 'X由用户点击链接人工复核' },
         policy: prior.policy,
         events

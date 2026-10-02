@@ -1006,6 +1006,17 @@
       trackGatePending: ['未过链上硬门','未過鏈上硬門','Chain gate not cleared','オンチェーン審査未通過','온체인 심사 미통과','لم تجتز بوابة السلسلة'],
       trackGateHint: ['合约安全性与市场行为分开显示，不合成可信度','合約安全性與市場行為分開顯示，不合成可信度','Contract safety is shown apart from market behaviour; they are never merged into one score','契約の安全性と市場行動は別々に表示され、1つのスコアに統合されません','계약 안전성과 시장 행동은 분리 표시되며 하나의 점수로 합치지 않습니다','تُعرض سلامة العقد منفصلة عن سلوك السوق ولا تُدمجان في درجة واحدة'],
       trackCoolingTag: ['冷却','冷卻','Cooling','冷却中','냉각','تبريد'],
+      trackTop10: ['前10占比','前10佔比','Top-10 share','上位10保有率','상위10 비중','حصة أكبر 10'],
+      trackSignalTop10: ['前10占比 {v}','前10佔比 {v}','top-10 share {v}','上位10保有率 {v}','상위10 비중 {v}','حصة أكبر 10 {v}'],
+      trackRiskFatal: ['合约高危','合約高危','Contract risk','契約リスク','계약 위험','خطر العقد'],
+      trackRiskClean: ['合约无致命项','合約無致命項','No fatal contract flag','致命的な契約項目なし','치명적 계약 항목 없음','لا علامات قاتلة'],
+      trackRiskUnknown: ['合约未评估','合約未評估','Contract not assessed','契約は未評価','계약 미평가','لم يُقيَّم العقد'],
+      trackRiskNone: ['暂无合约数据','暫無合約資料','No contract read yet','契約データなし','계약 데이터 없음','لا بيانات عقد بعد'],
+      trackRiskHintFatal: ['第二安全源判定该合约存在致命风险','第二安全源判定該合約存在致命風險','A second safety source flagged a fatal contract risk','第2の安全情報源が致命的な契約リスクを検出','제2 안전 소스가 치명적 계약 위험을 감지','مصدر سلامة ثانٍ رصد خطرًا قاتلًا في العقد'],
+      trackRiskHintClean: ['已读到合约且未发现致命项','已讀到合約且未發現致命項','Contract read, no fatal flag found','契約を読取済み、致命的項目なし','계약 조회 완료, 치명적 항목 없음','قُرئ العقد ولم تُوجد علامات قاتلة'],
+      trackRiskHintUnknown: ['已读到合约但关键项缺失，不能当作安全','已讀到合約但關鍵項缺失，不能當作安全','Contract read but key flags are missing, so this is not a clean bill','契約は読取済みだが重要項目が欠落しており安全とは言えません','계약 조회됨, 핵심 항목 누락으로 안전으로 볼 수 없음','قُرئ العقد لكن الحقول الأساسية ناقصة، لذا ليس شهادة أمان'],
+      trackRiskHintNone: ['该追踪标的本轮未读到合约数据','該追蹤標的本輪未讀到合約資料','No contract data was read for this lead this cycle','この追跡対象の契約データは今サイクル未取得','이 추적 대상의 계약 데이터를 이번 주기에 읽지 못했습니다','لم تُقرأ بيانات العقد لهذا الهدف في هذه الدورة'],
+      trackRiskCount: ['{n} 个合约高危','{n} 個合約高危','{n} with contract risk','{n}件が契約リスクあり','{n}건 계약 위험','{n} بمخاطر عقد'],
       trackLiveTag: ['在榜','在榜','On board','掲載中','목록에 있음','مدرج'],
       liveLp: ['流动性','流動性','Liquidity','流動性','유동성','السيولة'],
       radarDisclaimer: ['自动筛选 · 观察线索，非安全保证','自動篩選 · 觀察線索，非安全保證','Automatic screening · Signals, not a safety guarantee','自動選別・安全性を保証しません','자동 필터링 · 안전 보장 아님','فحص تلقائي · إشارات وليست ضمانًا للأمان'],
@@ -2538,7 +2549,7 @@
       });
       const signature = JSON.stringify([cards.map(function (card) {
         return [card.row.chain, card.row.address, card.row.quadrant, card.row.firstSeenAt, card.row.lastSeenAt,
-          card.row.lastSignalAt, card.first, card.last, card.gate, card.cooling, card.row.signals];
+          card.row.lastSignalAt, card.row.risk, card.first, card.last, card.gate, card.cooling, card.row.signals];
       }), mode, currentLocale, data && data.generatedAt]);
       if (signature === trackFingerprint) return;
       trackFingerprint = signature;
@@ -2549,6 +2560,9 @@
           + ' · ' + ['POOL_PULLED', 'DISTRIBUTION', 'BREAKOUT', 'WATCH'].map(function (name) {
             return t(TRACK_TAG[name]) + ' ' + formatCount(summary.quadrants ? summary.quadrants[name] : 0);
           }).join(' · ')
+          // Contract risk is reported next to the quadrants, not merged into
+          // them: a safety count and a behaviour count are different questions.
+          + (number(summary.atRisk) > 0 ? ' · ' + t('trackRiskCount', { n: formatCount(summary.atRisk) }) : '')
         : '';
 
       const money = function (value) { return hasFiniteValue(value) ? formatMoney(value) : t('unknown'); };
@@ -2564,10 +2578,15 @@
       };
       const multiple = function (ratio) { return Number(ratio).toFixed(2) + 'x'; };
       const percent = function (ratio) { return formatSignedPercent(Number(ratio) - 1); };
+      // A share is a level, not a multiple: it renders as a percentage and moves
+      // in percentage points, so "rising concentration" never reads as a ratio.
+      const share = function (value) { return hasFiniteValue(value) ? (Number(value) * 100).toFixed(1) + '%' : t('unknown'); };
+      const points = function (delta) { const moved = Number(delta) * 100; return (moved > 0 ? '+' : '') + moved.toFixed(1) + 'pp'; };
 
       byId('trackRows').innerHTML = cards.map(function (card) {
         const row = card.row, first = card.first, last = card.last;
-        const risk = row.quadrant === 'POOL_PULLED' || row.quadrant === 'DISTRIBUTION';
+        const contractFatal = Boolean(row.risk) && row.risk.verdict === 'FATAL';
+        const risk = row.quadrant === 'POOL_PULLED' || row.quadrant === 'DISTRIBUTION' || contractFatal;
         const tag = TRACK_TAG[row.quadrant] || 'trackTagWatch';
         const tagClass = TRACK_CLASS[row.quadrant] || 'track-tag-watch';
         const axisRow = function (label, firstValue, lastValue, render, format) {
@@ -2584,20 +2603,37 @@
             + '<span class="pair mono">' + escapeHtml(render(firstValue) + ' → ' + render(lastValue)) + '</span>'
             + '<span class="delta ' + status + '">' + escapeHtml(known ? format(ratio) + (moved ? ' ' + (rising ? '▲' : '▼') : '') : '—') + '</span></div>';
         };
+        // Concentration is the one axis a provider may simply not answer for a
+        // given lead. Unobserved on either side shows a dash, so a silent axis
+        // never masquerades as a flat reading of zero.
+        const shiftRow = function (label, firstValue, lastValue) {
+          const known = hasFiniteValue(firstValue) && hasFiniteValue(lastValue);
+          const delta = known ? Number(lastValue) - Number(firstValue) : null;
+          const moved = known && Math.abs(delta) > 1e-9;
+          const rising = moved && delta >= 0;
+          const status = !moved ? 'flat' : risk ? 'risk' : rising ? 'up' : 'down';
+          const value = function (input) { return hasFiniteValue(input) ? share(input) : '—'; };
+          return '<div class="track-axis"><small>' + escapeHtml(label) + '</small>'
+            + '<span class="pair mono">' + escapeHtml(value(firstValue) + ' → ' + value(lastValue)) + '</span>'
+            + '<span class="delta ' + status + '">' + escapeHtml(known ? points(delta) + (moved ? ' ' + (rising ? '▲' : '▼') : '') : '—') + '</span></div>';
+        };
         const axes = [
           axisRow(t('trackPrice'), first.price, last.price, price, multiple),
           axisRow(t('liveCap'), first.marketCap, last.marketCap, money, percent),
           axisRow(t('liveLp'), first.liquidity, last.liquidity, money, percent),
-          axisRow(t('trackHolders'), first.holders, last.holders, count, percent)
+          axisRow(t('trackHolders'), first.holders, last.holders, count, percent),
+          shiftRow(t('trackTop10'), first.top10Rate, last.top10Rate)
         ].join('');
         const signalText = function (signal) {
           const level = function () {
             if (signal.axis === 'price' || signal.axis === 'holders') return multiple(number(signal.rung));
             if (signal.axis === 'marketCap') return money(number(signal.rung));
             if (signal.axis === 'liquidity') return formatSignedPercent(number(signal.rung));
+            if (signal.axis === 'top10') return points(number(signal.rung));
             return String(signal.rung);
           };
-          const key = { price: 'trackSignalPrice', marketCap: 'trackSignalMarketCap', liquidity: 'trackSignalLiquidity', holders: 'trackSignalHolders' }[signal.axis];
+          const key = { price: 'trackSignalPrice', marketCap: 'trackSignalMarketCap', liquidity: 'trackSignalLiquidity',
+            holders: 'trackSignalHolders', top10: 'trackSignalTop10' }[signal.axis];
           return key ? t(key, { v: level() }) : signal.axis + ' ' + level();
         };
         const signals = (row.signals || []).slice(0, 4);
@@ -2609,10 +2645,23 @@
         const baseline = t('trackFirstSeen') + ' ' + escapeHtml(formatClock(row.firstSeenAt))
           + ' · ' + escapeHtml(t('trackAnchorPrice', { v: price(first.price) }))
           + ' · ' + escapeHtml(t('trackAnchorCap', { v: money(first.marketCap) }));
+        // The third badge is the contract verdict, and it carries its own
+        // evidence. An unread or partial contract says so rather than borrowing
+        // the gate's authority, so "not assessed" can never read as "safe".
+        const contract = function () {
+          const verdict = row.risk && row.risk.verdict;
+          if (verdict === 'FATAL') return { key: 'trackRiskFatal', cls: 'track-tag-pool', title: t('trackRiskHintFatal') };
+          if (verdict === 'NO_FATAL_FLAGS') return { key: 'trackRiskClean', cls: 'track-tag-breakout', title: t('trackRiskHintClean') };
+          if (verdict === 'UNKNOWN') return { key: 'trackRiskUnknown', cls: 'track-tag-watch', title: t('trackRiskHintUnknown') };
+          return { key: 'trackRiskNone', cls: 'track-tag-watch', title: t('trackRiskHintNone') };
+        }();
+        const reasons = row.risk && Array.isArray(row.risk.reasons) ? row.risk.reasons : [];
+        const contractTitle = reasons.length ? contract.title + ' — ' + reasons.join(', ') : contract.title;
         return '<article class="track-card' + (risk ? ' risk' : '') + '">'
           + '<div class="track-card-head"><strong>' + escapeHtml(row.symbol || '?') + '</strong><span>'
           + '<span class="live-tag ' + tagClass + '">' + escapeHtml(t(tag)) + '</span> '
-          + '<span class="live-tag ' + (card.gate ? 'track-tag-gate' : 'track-tag-watch') + ' track-gate" title="' + escapeHtml(t('trackGateHint')) + '">' + escapeHtml(t(card.gate ? 'trackGatePassed' : 'trackGatePending')) + '</span></span></div>'
+          + '<span class="live-tag ' + (card.gate ? 'track-tag-gate' : 'track-tag-watch') + ' track-gate" title="' + escapeHtml(t('trackGateHint')) + '">' + escapeHtml(t(card.gate ? 'trackGatePassed' : 'trackGatePending')) + '</span> '
+          + '<span class="live-tag ' + contract.cls + ' track-gate" title="' + escapeHtml(contractTitle) + '">' + escapeHtml(t(contract.key)) + '</span></span></div>'
           + '<div class="track-baseline">' + baseline + (card.cooling ? ' · <span class="track-cooling">' + escapeHtml(t('trackCoolingTag')) + '</span>' : '') + '</div>'
           + '<div class="track-axes">' + axes + '</div>'
           + signalBlock + '</article>';
