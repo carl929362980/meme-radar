@@ -186,6 +186,39 @@ test('a feed publishing no price still reports a multiple, read from market cap'
   assert.equal(direct.basis, 'price', 'a price a feed does publish is preferred over the fallback');
 });
 
+test('a reading that already crossed its rung is announced even with no further sighting', () => {
+  // A rung is read off two numbers and only one of them moves on a sighting, so a
+  // record whose last sighting already shows the multiple has nobody left to
+  // announce it — the feeds have stopped reporting the pool. The crossing is in
+  // the record either way, and a board that cannot see it is hiding the value it
+  // exists to show.
+  const stale = { chain: 'sol', address: 'So11111111111111111111111111111111111111112', symbol: 'LATE',
+    source: 'feed', firstSeenAt: AT, lastSeenAt: AT, reached: {}, signals: [],
+    snapshot: { price: null, marketCap: 1_000, liquidity: 5_000, holders: 3, top10Rate: null, at: AT },
+    latest: { price: null, marketCap: 2_500, liquidity: 5_100, holders: 2, top10Rate: null, at: AT } };
+  const kept = observeTracks([stale], [], AT + 60_000);
+  const record = kept.find(row => row.address === stale.address);
+  assert.ok(record, 'the record is still held — this is about reading it, not about keeping it');
+
+  const signal = (record.signals || []).find(entry => entry.id === 'price:2');
+  assert.ok(signal, 'the multiple its own reading shows is announced');
+  assert.equal(signal.basis, 'marketCap');
+  assert.equal(signal.at, AT, 'stamped with the reading, not with the cycle that re-read it');
+  assert.equal(worthWatching(record, AT + 60_000), true, 'and the lead therefore reaches the board');
+});
+
+test('re-reading a record announces each rung once, not once per cycle', () => {
+  const stale = { chain: 'sol', address: 'So11111111111111111111111111111111111111112', symbol: 'LATE',
+    source: 'feed', firstSeenAt: AT, lastSeenAt: AT, reached: {}, signals: [],
+    snapshot: { price: null, marketCap: 1_000, liquidity: 5_000, holders: 3, top10Rate: null, at: AT },
+    latest: { price: null, marketCap: 5_000, liquidity: 5_100, holders: 2, top10Rate: null, at: AT } };
+  let kept = observeTracks([stale], [], AT + 60_000);
+  for (const offset of [120_000, 180_000]) kept = observeTracks(kept, [], AT + offset);
+  const ids = kept[0].signals.map(entry => entry.id);
+  assert.deepEqual(ids, ['price:2', 'price:4'], 'both rungs the one reading crossed are announced, and announced once');
+  assert.equal(kept[0].lastSignalAt, AT, 'and the log does not creep forward with each re-read');
+});
+
 test('the summary reports the leads the board did not print', () => {
   assert.equal(summarizeTracking([], AT).quiet, 0, 'and defaults to none rather than to a missing field');
   assert.equal(summarizeTracking([], AT, { quiet: 1294 }).quiet, 1294);

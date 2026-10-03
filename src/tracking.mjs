@@ -243,6 +243,21 @@ export function dueTrackSignals(record, now = Date.now()) {
   return signals;
 }
 
+// Writes newly crossed rungs into a record. It is its own function because it is
+// called from two places - where a sighting arrives, and the cycle-end re-read
+// below - and both must write a signal the same way: bounded log, newest first,
+// and `reached` advanced so the rung never fires a second time.
+function recordDueSignals(record, at, signalLimit) {
+  const signals = dueTrackSignals(record, at);
+  if (!signals.length) return 0;
+  const reached = { ...record.reached };
+  for (const signal of signals) reached[signal.id] = signal.at;
+  record.reached = reached;
+  record.signals = [...signals, ...(record.signals || [])].slice(0, signalLimit);
+  record.lastSignalAt = Math.max(Number(record.lastSignalAt) || 0, at);
+  return signals.length;
+}
+
 // A passing chain-review gate is a contract-safety verdict; the quadrant is a
 // market-behaviour one. They are deliberately reported as separate badges so a
 // quiet token with a clean contract never reads as a live opportunity.
@@ -392,14 +407,7 @@ export function observeTracks(records, observations, now = Date.now(),
         snapshot: { ...anchor, at: anchorAt }, latest, risk, reached: {}, signals: [],
         veto: verdict, firstVeto: firstVerdict, curve };
     }
-    const signals = dueTrackSignals(record, now);
-    if (signals.length) {
-      const reached = { ...record.reached };
-      for (const signal of signals) reached[signal.id] = signal.at;
-      record.reached = reached;
-      record.signals = [...signals, ...(record.signals || [])].slice(0, signalLimit);
-      record.lastSignalAt = now;
-    }
+    recordDueSignals(record, now, signalLimit);
     byAddress.set(key, record);
   };
 
@@ -441,6 +449,23 @@ export function observeTracks(records, observations, now = Date.now(),
     // watching at the moment it went quiet. A feed lead never reaches this
     // window - its own hour is the shorter clock, as it should be.
     .filter(row => silentFor(row, now) <= staleLimit);
+  // A rung is a statement about two readings, and only one of them keeps moving.
+  // The second stops the moment the feeds stop reporting the pool, so a crossing
+  // that reading already shows has nobody left to announce it: the record is
+  // still here, its numbers still say "three times its first sighting", and no
+  // further sighting will ever arrive to say so. That is half of a feed lead's
+  // life - the discovery feed reports a pool for its own window and this set
+  // keeps it for twice that - so the last reading is the one that is never read.
+  // Measured on the live set while this was written: eight records reading two to
+  // five times their first sighting, not one of them on the board.
+  //
+  // Re-reading is idempotent - `reached` fires a rung once - and that is also
+  // what lets a change in how a reading is *derived* reach the records stored
+  // before it. Without both halves, the fix that taught the price ladder to read
+  // a market cap stayed invisible on every row it had already been handed, and
+  // the next such fix would have too. The stamp is the reading's own time, not
+  // this cycle's, so a signal never reads fresher than the number under it.
+  for (const record of alive) recordDueSignals(record, Number(record?.latest?.at) || now, signalLimit);
   // A lead the pre-flight checklist vetoed is not tracked at all. It is not a
   // lead this product would have anyone act on, so carrying it is not a smaller
   // reading of it, it is a wrong one - and the board is a watch list, not a
