@@ -20,10 +20,33 @@
 // `key` names the axis in signal ids and must stay stable; `field` is where the
 // reading lives on a snapshot. They differ only for top10, whose value is the
 // rate itself rather than the bare axis name.
+//
+// The value multiple answers the one question the board exists to answer - how
+// many times its first-seen worth this lead is now worth - and it reads whichever
+// number the lead's feed actually publishes. The market feed publishes a price,
+// so the multiple is a price ratio. The discovery feed publishes no price at all
+// (measured on the live board while this was written: none of 1296 feed leads
+// carried one) but it does publish market cap, and a launch-pad token has a fixed
+// supply, so the market-cap ratio is the same multiple. Without the fallback the
+// board could not say "this one multiplied" for ninety-eight per cent of what it
+// watches, and the omission was not neutral: the only rung that still fired on
+// the discovery feed was holder growth, which is not the same quantity. A lead at
+// thirty-two times its first sighting was crossing no rung at all - holders had
+// gone *down* - while a lead at 1.3x on holders was making the board.
+//
+// Which reading produced the multiple travels with the signal, because the card
+// has to name it: a feed lead's anchor line already says that feed publishes no
+// price, and a chip calling the same number a price would contradict it.
+function valueMultiple(first, last) {
+  if (first?.price > 0 && last?.price > 0) return { value: last.price / first.price, basis: 'price' };
+  if (first?.marketCap > 0 && last?.marketCap > 0) return { value: last.marketCap / first.marketCap, basis: 'marketCap' };
+  return null;
+}
 const AXES = Object.freeze([
-  // Multiples of the first-seen price. The ladder never re-fires a rung.
+  // Multiples of the first-seen worth. The ladder never re-fires a rung.
   { key: 'price', field: 'price', rungs: Object.freeze([2, 4, 8]), armed: () => true,
-    value: (first, last) => first.price > 0 && last.price > 0 ? last.price / first.price : null },
+    value: (first, last) => valueMultiple(first, last)?.value ?? null,
+    basis: (first, last) => valueMultiple(first, last)?.basis ?? null },
   // Absolute market-cap milestones, counted only when crossed from below.
   { key: 'marketCap', field: 'marketCap', rungs: Object.freeze([1_000_000, 5_000_000, 10_000_000]),
     armed: (first, rung) => !(first.marketCap >= rung),
@@ -209,7 +232,12 @@ export function dueTrackSignals(record, now = Date.now()) {
       if (record.reached?.[id]) continue;
       const value = axis.value(first, last);
       if (value === null) continue;
-      if (crossed(axis, first, last, rung)) signals.push({ id, axis: axis.key, rung, value, at: now });
+      // An axis may name which reading produced its ratio, so the card can label
+      // the signal honestly rather than assuming the axis name is the source.
+      if (crossed(axis, first, last, rung)) {
+        signals.push({ id, axis: axis.key, rung, value, at: now,
+          ...(axis.basis ? { basis: axis.basis(first, last) } : {}) });
+      }
     }
   }
   return signals;
@@ -247,6 +275,43 @@ export function classifyTrack(record, now = Date.now()) {
   if (price !== null && price >= 1.2 && (concentrating || draining)) return 'DISTRIBUTION';
   if (price !== null && price >= 1.5 && (liquidity === null || liquidity >= 1)) return 'BREAKOUT';
   return 'WATCH';
+}
+
+// The axes whose upward crossing is evidence of demand. `top10` is deliberately
+// absent: supply gathering into fewer hands is a caution the card already carries
+// under its own badge, not a reason to put a lead in front of a reader, and the
+// same goes for a spread. `liquidity` is here only in its positive direction,
+// which is why the rung's sign is tested rather than the axis alone.
+const DEMAND_AXES = Object.freeze(['price', 'marketCap', 'holders', 'liquidity']);
+
+// Whether a lead has earned a place on the board. The board is a watch list of
+// what is worth entering, so a lead belongs on it when something has actually
+// happened to it: a proven wallet bought, or it moved up enough for a rung of its
+// own ladder to be crossed, or it is breaking out - the quadrant that reaches
+// 1.5x, before the price ladder's first rung at 2x would report it.
+//
+// Measured on the live board when this was written: 1299 of 1317 Solana leads and
+// 48 of 62 BSC ones had produced no signal at all - they had been seen and
+// nothing else. That is what the reader was scrolling through, and it is not a
+// smaller market on a quiet day, it is the discovery feed's arrival rate (about
+// twenty-four new pools a minute on Solana) rendered as a list. A board that
+// carries them cannot show the few that matter, because they are not the few.
+//
+// This is a *read*, not a retirement, and the difference matters. A vetoed lead
+// is dropped by the fold and is gone for good - it will never become a lead, so
+// nothing is lost by forgetting it. A quiet lead is not like that: it may cross a
+// rung on the very next cycle, and it is quiet precisely because it is young. So
+// it stays in the watch set, holding the anchor its ladder is measured from, and
+// only the board it is printed on leaves it out. Dropping it from the fold would
+// restart its baseline every cycle and the slow climb this product exists to
+// catch would never cross a rung at all.
+export function worthWatching(record, now = Date.now()) {
+  if (classifyTrack(record, now) === 'BREAKOUT') return true;
+  return (Array.isArray(record?.signals) ? record.signals : []).some(signal => {
+    if (signal?.axis === 'flow') return signal.kind === 'ENTRY';
+    const rung = Number(signal?.rung);
+    return Number.isFinite(rung) && rung > 0 && DEMAND_AXES.includes(signal.axis);
+  });
 }
 
 // Reads which feed supplied a lead's market facts. Two feeds do not agree on
@@ -401,7 +466,7 @@ export function observeTracks(records, observations, now = Date.now(),
 
 const QUADRANTS = Object.freeze(['POOL_PULLED', 'DISTRIBUTION', 'BREAKOUT', 'WATCH']);
 
-export function summarizeTracking(records, now = Date.now(), { coolingMs = 30 * 60_000, vetoed = 0 } = {}) {
+export function summarizeTracking(records, now = Date.now(), { coolingMs = 30 * 60_000, vetoed = 0, quiet = 0 } = {}) {
   const rows = Array.isArray(records) ? records : [];
   const quadrants = Object.fromEntries(QUADRANTS.map(name => [name, 0]));
   let cooling = 0;
@@ -434,5 +499,13 @@ export function summarizeTracking(records, now = Date.now(), { coolingMs = 30 * 
   const signals = rows.flatMap(row => (row.signals || []).map(signal => ({ ...signal, address: row.address, symbol: row.symbol, chain: row.chain })))
     .sort((a, b) => b.at - a.at).slice(0, 20);
   return { tracked: rows.length, cooling, active: rows.length - cooling, atRisk, exiting,
-    blocked: blocked + Math.max(0, Number(vetoed) || 0), quadrants, recentSignals: signals };
+    blocked: blocked + Math.max(0, Number(vetoed) || 0),
+    // And a fourth count for a fourth question. These are leads the board did not
+    // carry because nothing had happened to them yet, and like the vetoes their
+    // tally cannot be read off `rows` - they are missing from it by definition -
+    // so the caller that left them out hands the number in. Reporting it is not
+    // optional: a board that shrinks in silence is indistinguishable from a quiet
+    // market, which is the failure every neighbouring default here was caught in.
+    quiet: Math.max(0, Number(quiet) || 0),
+    quadrants, recentSignals: signals };
 }

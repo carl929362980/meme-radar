@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { observeTracks, classifyTrack, summarizeTracking, trackSnapshot, trackKey, TRACK_AXES, EXIT_ALERT_MS } from '../src/tracking.mjs';
+import { observeTracks, classifyTrack, summarizeTracking, trackSnapshot, trackKey, TRACK_AXES, EXIT_ALERT_MS, worthWatching } from '../src/tracking.mjs';
 
 const AT = Date.UTC(2026, 9, 2, 12, 0, 0);
 const EVM = '0x1111111111111111111111111111111111111111';
@@ -129,6 +129,67 @@ test('distribution is reachable from concentration alone, so a chain without poo
   // Concentration rising while the price is flat is not distribution: nothing is
   // being sold into strength yet.
   assert.equal(classifyTrack({ snapshot, latest: { ...snapshot, price: 1.05, top10Rate: 0.35 } }), 'WATCH');
+});
+
+test('a lead earns a place on the board by moving, not by being seen', () => {
+  const record = (signals, over = {}) => ({ chain: 'bsc', address: EVM, symbol: 'FISH', source: 'feed',
+    firstSeenAt: AT, lastSeenAt: AT, snapshot: { marketCap: 20_000, liquidity: 10_000, holders: 100, at: AT },
+    latest: { marketCap: 20_000, liquidity: 10_000, holders: 100, at: AT }, signals, ...over });
+  const rung = (axis, level) => [{ id: axis + ':' + level, axis, rung: level, value: level, at: AT }];
+
+  assert.equal(worthWatching(record([]), AT), false, 'a lead nothing has happened to is not printed');
+  assert.equal(worthWatching(record(rung('holders', 2)), AT), true, 'holder growth is demand');
+  assert.equal(worthWatching(record(rung('price', 2)), AT), true, 'so is a multiple of its first-seen worth');
+  assert.equal(worthWatching(record(rung('liquidity', 0.5)), AT), true, 'and funding arriving');
+  assert.equal(worthWatching(record(rung('liquidity', -0.3)), AT), false,
+    'a pool being drained is a caution to carry, not a reason to open a card');
+  assert.equal(worthWatching(record(rung('top10', 0.1)), AT), false,
+    'and supply gathering into fewer hands is a caution too');
+  assert.equal(worthWatching(record([{ id: 'flow:EXIT', axis: 'flow', kind: 'EXIT', rung: 3, value: 500, at: AT }]), AT),
+    false, 'a wallet exit on its own is not an entry candidate');
+  assert.equal(worthWatching(record([{ id: 'flow:ENTRY', axis: 'flow', kind: 'ENTRY', rung: 3, value: 500, at: AT }]), AT),
+    true, 'a proven wallet buying is the whole point');
+});
+
+test('the quadrant can put a lead on the board before its first rung is crossed', () => {
+  // 1.5x with the pool holding its depth is the board's own breakout call, and it
+  // arrives before the price ladder's first rung at 2x - so a ladder-only rule
+  // would leave the earliest part of a move off the board entirely.
+  const first = { marketCap: 20_000, liquidity: 10_000, holders: 100, price: 1, at: AT };
+  const breaking = { chain: 'bsc', address: EVM, source: 'market', firstSeenAt: AT, lastSeenAt: AT,
+    snapshot: first, latest: { ...first, price: 1.6 }, signals: [] };
+  assert.equal(classifyTrack(breaking, AT), 'BREAKOUT');
+  assert.equal(worthWatching(breaking, AT), true);
+});
+
+test('a feed publishing no price still reports a multiple, read from market cap', () => {
+  // The discovery feed publishes no price at all, so the ladder reads the same
+  // multiple off market cap - the same number for a launch-pad token, whose supply
+  // is fixed. Without it the board could not say "this one multiplied" for the
+  // ninety-eight per cent of leads whose baseline came from that feed, and the
+  // only rung still firing there was holder growth, which is not that quantity.
+  const dog = (marketCap, price) => ({ chain: 'sol', address: 'So11111111111111111111111111111111111111112',
+    symbol: 'DOG', source: price ? 'market' : 'feed', marketCap, liquidity: 10_000, holders: 100,
+    ...(price ? { price } : {}) });
+
+  let records = observeTracks([], [dog(20_000)], AT);
+  assert.equal(records[0].snapshot.price, null, 'the feed gave no price');
+
+  records = observeTracks(records, [dog(70_000)], AT + 60_000);
+  const signal = records[0].signals.find(entry => entry.id === 'price:2');
+  assert.ok(signal, 'tripling its market cap is a multiple worth reporting');
+  assert.equal(signal.basis, 'marketCap', 'and the signal names the reading it was taken from');
+
+  // A published price is the direct reading, and wins when there is one to read.
+  const quoted = observeTracks([], [dog(20_000, 0.001)], AT);
+  const direct = observeTracks(quoted, [dog(200_000, 0.004)], AT + 60_000)[0].signals.find(entry => entry.id === 'price:2');
+  assert.equal(direct.basis, 'price', 'a price a feed does publish is preferred over the fallback');
+});
+
+test('the summary reports the leads the board did not print', () => {
+  assert.equal(summarizeTracking([], AT).quiet, 0, 'and defaults to none rather than to a missing field');
+  assert.equal(summarizeTracking([], AT, { quiet: 1294 }).quiet, 1294);
+  assert.equal(summarizeTracking([], AT, { quiet: -3 }).quiet, 0, 'a nonsense count cannot go negative');
 });
 
 test('a fatal contract verdict is never forgotten', () => {

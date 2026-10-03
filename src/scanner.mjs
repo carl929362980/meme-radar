@@ -5,7 +5,7 @@ import { discoveryScreen, deepScreen, knownRiskReasons, marketCap, createdAt } f
 import { socialGate } from './social.mjs';
 import { tokenInfoPrice } from './ave.mjs';
 import { collectOutcomeSamples, selectOutcomeJobs, outcomeCoverage, sampleRejected } from './outcomes.mjs';
-import { observeTracks, summarizeTracking } from './tracking.mjs';
+import { observeTracks, summarizeTracking, worthWatching } from './tracking.mjs';
 import { goplusIdentity } from './goplus.mjs';
 import { tokenKey } from './local-store.mjs';
 import { reconcileLiveLeads } from './live-leads.mjs';
@@ -1020,6 +1020,11 @@ export class Scanner {
       });
       const degraded = discoveryHealth.complete === false || auditHadError;
       const pause = budgetPause || providerPause(this.provider, now);
+      // What the board will carry: the watch set minus the leads nothing has
+      // happened to yet. `track` keeps the whole set so every lead's anchor - the
+      // reading its ladder is measured from - survives a quiet cycle, and only the
+      // printed board leaves the quiet ones out.
+      const board = tracking.filter(row => worthWatching(row, now));
       const next = {
         ...prior,
         version: 2,
@@ -1050,7 +1055,11 @@ export class Scanner {
         outcomes,
         outcomeSummary: summarizeOutcomes(outcomes),
         track: tracking,
-        trackSummary: summarizeTracking(tracking, now, { coolingMs: settings.trackCoolingMs, vetoed: trackStats.vetoed }),
+        // The summary describes the board, so it is handed the board, and the
+        // leads left out of it are counted rather than dropped in silence: a board
+        // that shrinks quietly is indistinguishable from a market that went quiet.
+        trackSummary: summarizeTracking(board, now, { coolingMs: settings.trackCoolingMs,
+          vetoed: trackStats.vetoed, quiet: tracking.length - board.length }),
         sourceHealth: { discovery: discoveryHealth, lastAudit: lastAuditHealth, lastSecondary: lastSecondaryHealth,
           // Reported so a throttled enrichment is visible instead of silently
           // producing cards with fewer axes. Optional: absent when disabled.

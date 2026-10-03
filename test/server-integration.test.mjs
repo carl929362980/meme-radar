@@ -368,17 +368,24 @@ test('a tracked lead carries its wallet flow, its baseline source, and nothing e
   const record = (over = {}) => ({ chain: 'bsc', address: '0x' + '1'.repeat(40), symbol: 'FISH',
     source: 'feed', firstSeenAt: at, lastSeenAt: at + 60_000, lastSignalAt: at + 30_000,
     snapshot: { price: null, marketCap: 20_000, liquidity: 10_000, holders: 100, top10Rate: null, at },
-    latest: { price: null, marketCap: 24_000, liquidity: 11_000, holders: 140, top10Rate: null, at: at + 60_000 },
+    latest: { price: null, marketCap: 48_000, liquidity: 11_000, holders: 100, top10Rate: null, at: at + 60_000 },
     risk: null, reached: { 'price:2': at }, exitedAt: at + 30_000,
     flow: { kind: 'EXIT', at: at + 30_000, wallets: 2, amountUsd: 330.04, closes: 2, activity: 'BOTH', strength: 'STRONG' },
-    signals: [{ id: 'flow:EXIT', axis: 'flow', kind: 'EXIT', rung: 2, value: 330.04, at: at + 30_000 }], ...over });
+    // The market multiple is carried alongside the wallet event, because a lead
+    // with nothing on it is not shown at all any more - and because the ratio's
+    // basis is a field of its own that has to survive the whitelist.
+    signals: [
+      { id: 'flow:EXIT', axis: 'flow', kind: 'EXIT', rung: 2, value: 330.04, at: at + 30_000 },
+      { id: 'price:2', axis: 'price', rung: 2, value: 2.4, basis: 'marketCap', at: at + 30_000 }
+    ], ...over });
 
   const server = createServer({ settings, supportedChains: ['sol', 'bsc'], controls: { value: {} }, state: { value: {
     activeChain: 'bsc', status: 'RUNNING', events: [], chainStates: {},
     track: [
       record(),
       record({ address: '0x' + '2'.repeat(40), source: 'private-feed-name', flow: { kind: 'HOLD', at },
-        signals: [{ id: 'flow:HOLD', axis: 'flow', kind: 'HOLD', rung: 1, value: 1, at }] })
+        signals: [{ id: 'flow:HOLD', axis: 'flow', kind: 'HOLD', rung: 1, value: 1, at },
+          { id: 'price:2', axis: 'price', rung: 2, value: 2.4, basis: 'marketCap', at }] })
     ],
     trackSummary: { tracked: 2, active: 2, cooling: 0, atRisk: 0, exiting: 1,
       quadrants: { POOL_PULLED: 0, DISTRIBUTION: 1, BREAKOUT: 0, WATCH: 1 }, recentSignals: [] }
@@ -396,6 +403,9 @@ test('a tracked lead carries its wallet flow, its baseline source, and nothing e
   assert.equal(flowing.quadrant, 'DISTRIBUTION', 'and the wallets leaving is what put it there');
   assert.equal(flowing.signals[0].axis, 'flow');
   assert.equal(flowing.signals[0].kind, 'EXIT');
+  assert.equal(flowing.signals[1].basis, 'marketCap',
+    'which reading produced a ratio reaches the page, so the chip can name it correctly');
+  assert.equal(flowing.signals[0].basis, null, 'and an axis that has only one reading does not invent a basis');
 
   // Anything the whitelist does not name must not appear, whichever side of the
   // boundary it came from.
@@ -417,8 +427,11 @@ test('the capped board sends the freshest leads rather than whichever were store
     chain: 'bsc', address: '0x' + String(index + 1).padStart(40, '0'), symbol: 'T' + index,
     source: 'feed', firstSeenAt: at + index, lastSeenAt,
     snapshot: { price: null, marketCap: 20_000, liquidity: 10_000, holders: 100, top10Rate: null, at },
-    latest: { price: null, marketCap: 20_000, liquidity: 10_000, holders: 100, top10Rate: null, at: lastSeenAt },
-    risk: null, reached: {}, signals: []
+    latest: { price: null, marketCap: 20_000, liquidity: 10_000, holders: 200, top10Rate: null, at: lastSeenAt },
+    risk: null, reached: {},
+    // A lead with nothing on it is not printed at all any more, so a fixture
+    // written to exercise the cap has to carry the crossing that keeps it there.
+    signals: [{ id: 'holders:2', axis: 'holders', rung: 2, value: 2, at }]
   });
   // Stored oldest-first. The two orders cannot accidentally agree whichever way
   // the freshest rows are picked.
@@ -436,6 +449,40 @@ test('the capped board sends the freshest leads rather than whichever were store
   assert.equal(body.track[0].symbol, 'T249', 'the most recently seen lead is the one that must survive the cap');
   assert.equal(body.track.some(row => row.symbol === 'T0'), false, 'the stalest stored rows are what gets dropped');
   assert.equal(Math.min(...body.track.map(row => row.lastSeenAt)), at + 50);
+});
+
+// The board carries what has happened, not what has merely been seen. The watch
+// set still holds the quiet leads - that is where their anchors live, and one may
+// cross a rung on the very next cycle - but the printed board leaves them out, and
+// says how many it left out, because a short board on its own reads exactly like a
+// market that went quiet.
+test('the board prints only the leads something has happened to, and reports the rest', async () => {
+  const at = Date.now();
+  const record = (index, over = {}) => ({
+    chain: 'bsc', address: '0x' + String(index + 1).padStart(40, '0'), symbol: 'T' + index,
+    source: 'feed', firstSeenAt: at, lastSeenAt: at + index,
+    snapshot: { price: null, marketCap: 20_000, liquidity: 10_000, holders: 100, top10Rate: null, at },
+    latest: { price: null, marketCap: 20_000, liquidity: 10_000, holders: 100, top10Rate: null, at: at + index },
+    risk: null, reached: {}, signals: [], ...over
+  });
+  const quiet = record(0);
+  const crossing = record(1, { signals: [{ id: 'holders:2', axis: 'holders', rung: 2, value: 2, at }] });
+  const drained = record(2, {
+    latest: { price: null, marketCap: 20_000, liquidity: 7_000, holders: 100, top10Rate: null, at: at + 2 },
+    signals: [{ id: 'liquidity:-0.3', axis: 'liquidity', rung: -0.3, value: -0.3, at }]
+  });
+
+  const server = createServer({ settings, supportedChains: ['sol', 'bsc'], controls: { value: {} }, state: { value: {
+    activeChain: 'bsc', status: 'RUNNING', events: [], chainStates: {}, track: [quiet, crossing, drained],
+    trackSummary: { tracked: 1, active: 1, cooling: 0, atRisk: 0, exiting: 0, blocked: 0, quiet: 2,
+      quadrants: { POOL_PULLED: 0, DISTRIBUTION: 0, BREAKOUT: 0, WATCH: 1 }, recentSignals: [] }
+  } } });
+
+  const { status, body } = await dispatch(server, '/api/status', { method: 'GET' });
+  assert.equal(status, 200);
+  assert.deepEqual(body.track.map(row => row.symbol), ['T1'],
+    'the crossed rung is printed; the quiet lead and the drained one are not');
+  assert.equal(body.trackSummary.quiet, 2, 'and the board says how many leads it left out');
 });
 
 // The pre-flight verdict, projected. The verdict maths has its own suite; what is

@@ -1102,6 +1102,10 @@
       trackNoSignal: ['暂未跨阈','暫未跨閾','No threshold crossed yet','まだしきい値未突破','아직 임계값 미돌파','لم تُتجاوز أي عتبة بعد'],
       trackSignalPrice: ['价格 {v} 达成','價格 {v} 達成','price {v} reached','価格 {v} 到達','가격 {v} 달성','بلغ السعر {v}'],
       trackSignalMarketCap: ['市值破 {v}','市值破 {v}','cap broke {v}','時価総額 {v} 突破','시총 {v} 돌파','تجاوزت القيمة {v}'],
+      // The price ladder reads its multiple from market cap on a lead whose feed
+      // publishes no price, so the chip says "cap" instead of "price" there. The
+      // card's anchor line already explains why that feed has no price.
+      trackSignalCap: ['市值 {v}','市值 {v}','cap {v}','時価総額 {v}','시총 {v}','القيمة {v}'],
       trackSignalLiquidity: ['流动性 {v}','流動性 {v}','liquidity {v}','流動性 {v}','유동성 {v}','السيولة {v}'],
       trackSignalHolders: ['持币 {v}','持幣 {v}','holders {v}','保有者 {v}','보유자 {v}','الحائزون {v}'],
       trackGatePassed: ['已过链上硬门','已過鏈上硬門','Chain gate passed','オンチェーン審査通過','온체인 심사 통과','اجتاز بوابة السلسلة'],
@@ -1125,6 +1129,10 @@
       trackFlowHintEntry: ['多个聪明钱/KOL钱包在同一窗口买入该标的。','多個聰明錢/KOL錢包在同一視窗買入該標的。','Several smart-money or KOL wallets bought this lead inside one window.','複数のスマートマネー／KOLウォレットが同一窓で購入しました。','여러 스마트머니/KOL 지갑이 같은 구간에서 매수했습니다.','اشترت عدة محافظ أموال ذكية أو KOL هذا الهدف في نافذة واحدة.'],
       trackExitCount: ['{n} 个在派发','{n} 個在派發','{n} distributing','{n}件が売却中','{n}개 분산 매도 중','{n} توزّع'],
       trackBlockedCount: ['已剔除 {n} 个否决','已剔除 {n} 個否決','{n} vetoed, excluded','否決 {n} 件を除外','거부 {n}개 제외','استُبعد {n} مرفوضًا'],
+      // Leads the board left out because nothing had happened to them yet. Said
+      // out loud for the same reason the veto count is: a short board on its own
+      // reads exactly like a market that went quiet.
+      trackQuietCount: ['已滤除 {n} 个无动静','已濾除 {n} 個無動靜','{n} quiet, filtered out','{n}件は無反応のため除外','{n}개 무반응 제외','{n} بلا حركة، مُستبعد'],
       trackFeedAnchor: ['发现流锚点','發現流錨點','Discovery-feed anchor','発見フィードの基準','발견 흐름 앵커','مرساة مصدر الاكتشاف'],
       trackLiveTag: ['在榜','在榜','On board','掲載中','목록에 있음','مدرج'],
       liveLp: ['流动性','流動性','Liquidity','流動性','유동성','السيولة'],
@@ -2691,6 +2699,13 @@
           // is therefore of leads that were *turned away*, reported so that a
           // smaller board is never mistaken for a quieter market.
           + (number(summary.blocked) > 0 ? ' · ' + t('trackBlockedCount', { n: formatCount(summary.blocked) }) : '')
+          // And a fifth, for the lead the board simply had nothing to say about
+          // yet. This is the one that matters most to a small board: the discovery
+          // feed's arrival rate is enormous, so most of what it reports is a pool
+          // that has done nothing, and without this number a 48-row board would
+          // look like the market had gone quiet rather than like the board had
+          // declined to print 1294 rows of nothing.
+          + (number(summary.quiet) > 0 ? ' · ' + t('trackQuietCount', { n: formatCount(summary.quiet) }) : '')
         : '';
 
       const money = function (value) { return hasFiniteValue(value) ? formatMoney(value) : t('unknown'); };
@@ -2770,7 +2785,12 @@
           };
           const key = { price: 'trackSignalPrice', marketCap: 'trackSignalMarketCap', liquidity: 'trackSignalLiquidity',
             holders: 'trackSignalHolders', top10: 'trackSignalTop10' }[signal.axis];
-          return key ? t(key, { v: level() }) : signal.axis + ' ' + level();
+          // The price ladder falls back to market cap on a feed that publishes no
+          // price, and the chip has to name the reading it actually has. The card's
+          // own anchor line says that feed has no price, so calling the number a
+          // price here would contradict it in the space of one card.
+          const label = signal.axis === 'price' && signal.basis === 'marketCap' ? 'trackSignalCap' : key;
+          return label ? t(label, { v: level() }) : signal.axis + ' ' + level();
         };
         const signals = (row.signals || []).slice(0, 4);
         const signalBlock = signals.length

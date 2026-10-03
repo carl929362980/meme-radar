@@ -7,7 +7,7 @@ import { tokenKey } from './local-store.mjs';
 import { CHART_RISK_VERSION, applyRiskExclusion } from './chart-risk.mjs';
 import { AveError } from './ave-settings.mjs';
 import { activeLiveLeads } from './live-leads.mjs';
-import { classifyTrack, EXIT_ALERT_MS, FLOW_KINDS, FLOW_ACTIVITIES, FLOW_STRENGTHS } from './tracking.mjs';
+import { classifyTrack, EXIT_ALERT_MS, FLOW_KINDS, FLOW_ACTIVITIES, FLOW_STRENGTHS, worthWatching } from './tracking.mjs';
 import { VETO_STATES, VETO_CODES, VETO_LEVELS } from './veto.mjs';
 
 const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
@@ -556,7 +556,12 @@ function publicTrackFlow(source) {
 
 function publicTrackSignal(signal = {}) {
   return { axis: text(signal.axis, 16), kind: FLOW_KINDS.includes(signal.kind) ? signal.kind : null,
-    rung: finiteOrNull(signal.rung), value: finiteOrNull(signal.value), at: finite(signal.at) };
+    rung: finiteOrNull(signal.rung), value: finiteOrNull(signal.value),
+    // Which reading produced the ratio, for the one axis that can be read two
+    // ways: the price ladder falls back to market cap where a feed publishes no
+    // price (see tracking.mjs), and a chip must name the reading it has.
+    basis: ['price', 'marketCap'].includes(signal.basis) ? signal.basis : null,
+    at: finite(signal.at) };
 }
 
 function publicTrack(row = {}) {
@@ -608,6 +613,12 @@ const TRACK_ROWS = 200;
 function publicTrackList(source) {
   if (!Array.isArray(source)) return [];
   return source.slice()
+    // The board carries what has happened, not what has merely been seen. A lead
+    // nothing has moved is still in the watch set - it keeps the anchor its ladder
+    // is measured from, and it may cross a rung on the next cycle - but it is not
+    // printed. This is the same read the summary makes, which is why both call the
+    // one function instead of each deciding for itself what "worth showing" means.
+    .filter(row => worthWatching(row))
     .sort((a, b) => finite(b?.lastSeenAt) - finite(a?.lastSeenAt))
     .slice(0, TRACK_ROWS)
     .map(publicTrack);
@@ -628,6 +639,12 @@ function publicTrackSummary(source = {}) {
     // is a veto. A lead can be vetoed at discovery and still be the board's best
     // mover, so this is deliberately not folded into any other number.
     blocked: finite(source.blocked),
+    // And a fourth count that is none of the above: leads the board did not carry
+    // because nothing had happened to them yet. It is reported for the same reason
+    // the veto count is - a shorter board on its own cannot be told apart from a
+    // quiet market - and it is likewise handed in by whatever left them out,
+    // because by construction they are not in `track` for it to count.
+    quiet: finite(source.quiet),
     quadrants: {
       POOL_PULLED: finite(quadrants.POOL_PULLED),
       DISTRIBUTION: finite(quadrants.DISTRIBUTION),
