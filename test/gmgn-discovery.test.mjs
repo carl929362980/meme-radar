@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
 import { GmgnDiscovery, CHAIN_PLANS, SIGNAL_KINDS, createGmgnDiscovery } from '../src/gmgn-discovery.mjs';
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -313,4 +315,98 @@ test('BSC omits the rug gate because the chain does not answer it', () => {
   assert.equal(Object.hasOwn(CHAIN_PLANS.sol.poolFilters, 'max_rug_ratio'), true);
   assert.equal(Object.hasOwn(CHAIN_PLANS.sol.poolFilters, 'min_marketcap'), false, 'no value gate on discovery');
   assert.equal(Object.hasOwn(CHAIN_PLANS.bsc.poolFilters, 'min_marketcap'), false, 'no value gate on discovery');
+});
+
+// The tracking board's read side. This is the same state the panel renders,
+// shaped for the board's vocabulary, and the shape is what the two guarantees
+// below depend on: the feed hands over its *own* first sighting so a card's
+// baseline is the moment the pool was truly first seen, and the market readings
+// stay under this feed's name so the board never compares two rulers.
+test('the board read hands over the feed\'s own anchor, not the cycle that picked it up', async () => {
+  let cap = 5_000, liq = 8_000;
+  const address = 'MintK11111111111111111111111111111111111111';
+  const { client } = fakeClient({ pools: [] });
+  client.trenches = async () => [poolRow({ address, marketCap: cap, liquidity: liq })];
+  const h = harness({ client });
+  h.engine.start();
+  await h.tick();
+
+  cap = 40_000; liq = 30_000;
+  h.advance(CHAIN_PLANS.sol.poolMs + 1_000);
+  await h.tick();
+
+  const read = h.engine.observations('sol');
+  assert.equal(read.pools.length, 1);
+  const pool = read.pools[0];
+  assert.equal(pool.source, 'feed', 'the board needs to know which feed set this baseline');
+  assert.equal(pool.address, address);
+  assert.equal(pool.baseline.marketCap, 5_000, 'the baseline is the frozen first sighting');
+  assert.equal(pool.marketCap, 40_000, 'and the reading is the newest one');
+  assert.equal(pool.firstSeenAt, 1_791_000_000_000, 'with the moment the feed first saw it');
+});
+
+test('the board read carries the newest wallet event per address, and only inside the buffer', async () => {
+  const address = 'MintL11111111111111111111111111111111111111';
+  const other = 'MintM11111111111111111111111111111111111111';
+  const { client, state } = fakeClient({ pools: [poolRow({ address })] });
+  state.trades.smartmoney = [
+    tradeRow(address, 'WalletBuy1', 'buy', 1_790_999_990),
+    tradeRow(address, 'WalletBuy2', 'buy', 1_790_999_991),
+    tradeRow(address, 'WalletBuy3', 'buy', 1_790_999_992),
+    tradeRow(other, 'WalletSell1', 'sell', 1_790_999_993, { isClose: true }),
+    tradeRow(other, 'WalletSell2', 'sell', 1_790_999_994, { isClose: true })
+  ];
+  const h = harness({ client, minWallets: 3 });
+  h.engine.start();
+  await h.tick();
+
+  const read = h.engine.observations('sol');
+  const byAddress = new Map(read.flows.map((flow) => [flow.address, flow]));
+  assert.equal(byAddress.get(address).kind, 'ENTRY');
+  assert.equal(byAddress.get(address).wallets, 3);
+  // The exit bar is one wallet below the entry bar, which is the whole reason a
+  // two-wallet sell shows up here at all.
+  assert.equal(byAddress.get(other).kind, 'EXIT');
+  assert.equal(byAddress.get(other).wallets, 2);
+
+  // Once the cluster falls out of the buffer the board hears nothing more about
+  // it: a flow event is a statement about now, and a stale one must not be
+  // presented as current.
+  h.advance(31 * 60_000);
+  await h.tick();
+  assert.deepEqual(h.engine.observations('sol').flows, []);
+});
+
+test('the board read is empty for a chain the engine does not run, and starts nothing', () => {
+  const h = harness({ client: fakeClient({}).client });
+  assert.deepEqual(h.engine.observations('eth'), { pools: [], flows: [] });
+  assert.equal(h.engine.states.size, 0, 'reading the board for an unsupported chain allocates nothing');
+  assert.equal(h.engine.observations('sol').pools.length, 0, 'and a supported chain that has not polled yet is simply empty');
+});
+
+// main.mjs is a script, so nothing in the suite executes it and a wiring mistake
+// there is invisible until the product is started for real. That is exactly how a
+// temporal-dead-zone error shipped: the scanner was handed the engine on a line
+// above the engine's own `const`. This runs the real wiring region against stubs,
+// so the property under test is "the board's second source is connected", not
+// "the file happens to contain the word feed".
+test('the app hands the discovery engine to the tracking board as its second source', () => {
+  const source = readFileSync(new URL('../src/main.mjs', import.meta.url), 'utf8');
+  const start = source.indexOf('const signals = createGmgnDiscovery(');
+  const end = source.indexOf('\nconst liveDiscovery =', start);
+  assert.ok(start > 0 && end > start, 'the wiring region moved; update this test rather than deleting it');
+
+  const captured = {};
+  const context = {
+    config: { supportedChains: ['sol', 'bsc'], goplusLookupsPerCycle: 0 },
+    market: {}, state: {}, controls: {}, sharedRequestIntervalMs: 1,
+    SecondaryValidator: function () {}, GoPlusReader: function () {},
+    createGmgnDiscovery: () => (captured.engine = { id: 'engine' }),
+    Scanner: function (options) { captured.options = options; }
+  };
+  vm.createContext(context);
+  vm.runInContext(source.slice(start, end), context);
+
+  assert.equal(captured.options.feed, captured.engine,
+    'the object the scanner is handed must be the engine that was built, and built first');
 });

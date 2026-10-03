@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { observeTracks, classifyTrack, summarizeTracking, trackSnapshot, trackKey, TRACK_AXES } from '../src/tracking.mjs';
+import { observeTracks, classifyTrack, summarizeTracking, trackSnapshot, trackKey, TRACK_AXES, EXIT_ALERT_MS } from '../src/tracking.mjs';
 
 const AT = Date.UTC(2026, 9, 2, 12, 0, 0);
 const EVM = '0x1111111111111111111111111111111111111111';
 const lead = (over = {}) => ({ chain: 'bsc', address: EVM, symbol: 'FISH',
   price: 0.0001, marketCap: 20_000, liquidity: 10_000, holders: 100, ...over });
+const cluster = (over = {}) => ({ chain: 'bsc', address: EVM, kind: 'EXIT', at: AT,
+  wallets: 3, amountUsd: 1_234, closes: 2, activity: 'BOTH', strength: 'STRONG', ...over });
 
 test('the address key lower-cases EVM addresses but preserves Solana mints', () => {
   assert.equal(trackKey('0xABCdef0000000000000000000000000000000001'), '0xabcdef0000000000000000000000000000000001');
@@ -174,4 +176,110 @@ test('records outside the retention window are dropped and the summary agrees', 
   const cooling = summarizeTracking(records, AT + 3_600_000, { coolingMs: 30 * 60_000 });
   assert.equal(cooling.cooling, 1, 'a lead that stopped being observed is cooling, not deleted');
   assert.equal(cooling.active, 0);
+});
+
+// Wallet flow is the board's only exit-class evidence, and it is the one kind of
+// evidence that cannot come from a market snapshot at all: "several proven
+// wallets are selling" is a delta over a trade feed. The tests below pin the
+// three properties that make it safe to show — it warns without a price move,
+// it outlives the next buy, and it never invents a lead.
+test('an exit cluster alone reads as distribution, before any axis has moved', () => {
+  let records = observeTracks([], [lead()], AT);
+  assert.equal(classifyTrack(records[0], AT), 'WATCH', 'nothing has happened yet');
+
+  records = observeTracks(records, [lead()], AT + 1000, { flows: [cluster()] });
+  assert.equal(records[0].exitedAt, AT);
+  assert.equal(classifyTrack(records[0], AT + 1000), 'DISTRIBUTION',
+    'the wallets leaving is the whole claim; waiting for the price to confirm it would miss the exit');
+  assert.deepEqual(records[0].signals.map(signal => signal.id), ['flow:EXIT']);
+  assert.equal(records[0].signals[0].axis, 'flow', 'a cluster is not a rung, so it never wears an axis name');
+  assert.equal(records[0].signals[0].rung, 3, 'the wallet count is what the card leads with');
+});
+
+test('the exit warning outlives a later buy, then expires on its own', () => {
+  let records = observeTracks([], [lead()], AT, { flows: [cluster()] });
+  records = observeTracks(records, [lead()], AT + 60_000, { flows: [cluster({ kind: 'ENTRY', at: AT + 60_000, closes: 0 })] });
+
+  assert.equal(records[0].flow.kind, 'ENTRY', 'a later buy is a real change of fact and replaces the latest event');
+  assert.equal(records[0].exitedAt, AT, 'but it does not erase the exit that already happened');
+  assert.equal(classifyTrack(records[0], AT + 120_000), 'DISTRIBUTION', 'so the warning is still lit a minute later');
+  assert.ok(records[0].signals.some(signal => signal.id === 'flow:ENTRY'), 'and the buy is logged in its own right');
+
+  assert.equal(classifyTrack(records[0], AT + EXIT_ALERT_MS + 1), 'WATCH',
+    'the warning is not a life sentence for the lead');
+});
+
+test('a flow event never invents a lead', () => {
+  const records = observeTracks([], [lead()], AT, { flows: [cluster({ address: '0x' + '9'.repeat(40) })] });
+  assert.equal(records.length, 1, 'a wallet moving is not evidence that a pool was observed');
+  assert.equal(records[0].flow, undefined);
+});
+
+test('an out-of-order flow event never walks the board backwards', () => {
+  let records = observeTracks([], [lead()], AT, { flows: [cluster({ at: AT + 60_000, wallets: 5 })] });
+  records = observeTracks(records, [lead()], AT + 61_000, { flows: [cluster({ at: AT, wallets: 2 })] });
+  assert.equal(records[0].flow.wallets, 5, 'the newer event stands');
+  assert.equal(records[0].signals.filter(signal => signal.id === 'flow:EXIT').length, 1, 'and it is announced once');
+});
+
+// The discovery feed sees pools the market hot list never carries, which is why
+// it feeds the board at all. The two feeds disagree on liquidity by up to 5x on
+// the same pool, so a record must belong to exactly one of them.
+test('a discovery lead keeps its own anchor and never displaces a market baseline', () => {
+  const pool = { source: 'feed', chain: 'bsc', address: EVM, symbol: 'FISH',
+    firstSeenAt: AT - 5 * 60_000,
+    baseline: { marketCap: 10_000, liquidity: 4_000, holders: 40 },
+    marketCap: 12_000, liquidity: 5_000, holders: 55 };
+
+  const records = observeTracks([], [], AT, { pools: [pool] });
+  assert.equal(records.length, 1, 'a pool the discovery feed saw is a lead like any other');
+  assert.equal(records[0].source, 'feed');
+  assert.equal(records[0].firstSeenAt, AT - 5 * 60_000,
+    "the anchor is the feed's own first sighting, not the moment a cycle picked it up");
+  assert.equal(records[0].snapshot.marketCap, 10_000, 'and the frozen reading is the baseline');
+  assert.equal(records[0].latest.marketCap, 12_000, 'while the newest reading is the latest');
+
+  const fromMarket = observeTracks([], [lead()], AT);
+  const afterPool = observeTracks(fromMarket, [], AT + 60_000, { pools: [pool] });
+  assert.deepEqual(afterPool[0].latest, fromMarket[0].latest,
+    'the discovery feed cannot advance a record the market feed created');
+
+  const fromPool = observeTracks([], [], AT, { pools: [pool] });
+  const afterMarket = observeTracks(fromPool, [lead()], AT + 60_000);
+  assert.deepEqual(afterMarket[0].latest, fromPool[0].latest,
+    'and the market feed cannot advance a discovery record - that would read as the gap between two rulers');
+  assert.equal(afterMarket[0].source, 'feed');
+
+  // A claimed earlier timestamp only counts when it arrives with the reading it
+  // belongs to: stamping today's numbers with an older time would be a worse lie
+  // than admitting the board only started watching now.
+  const stamped = observeTracks([], [], AT, { pools: [{ ...pool, baseline: undefined }] });
+  assert.equal(stamped[0].firstSeenAt, AT);
+});
+
+test('the wallet cluster attaches to a lead whoever supplied its market facts', () => {
+  // A cluster is an event about wallets, not an axis about scale, so it is
+  // matched by address alone. This is the case that matters most in production:
+  // the pool came from the discovery feed and the wallets are what make it worth
+  // looking at.
+  const pool = { source: 'feed', chain: 'bsc', address: EVM, symbol: 'FISH', baseline: { marketCap: 10_000 },
+    marketCap: 12_000, liquidity: 5_000, holders: 55 };
+  const records = observeTracks([], [], AT, { pools: [pool], flows: [cluster()] });
+  assert.equal(records[0].source, 'feed');
+  assert.equal(records[0].flow.kind, 'EXIT');
+  assert.equal(classifyTrack(records[0], AT), 'DISTRIBUTION');
+});
+
+test('the exit count is reported next to the quadrants and expires with the warning', () => {
+  let records = observeTracks([], [lead()], AT);
+  records = observeTracks(records, [lead()], AT + 1000, { flows: [cluster()] });
+
+  const summary = summarizeTracking(records, AT + 2000);
+  assert.equal(summary.exiting, 1);
+  assert.equal(summary.quadrants.DISTRIBUTION, 1);
+  assert.ok(summary.recentSignals.some(signal => signal.axis === 'flow' && signal.symbol === 'FISH'),
+    'a cluster reaches the board-wide signal feed with its lead attached');
+
+  assert.equal(summarizeTracking(records, AT + EXIT_ALERT_MS + 1).exiting, 0,
+    'the count expires with the warning rather than staying lit forever');
 });

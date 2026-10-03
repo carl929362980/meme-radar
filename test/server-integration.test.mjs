@@ -357,3 +357,52 @@ test('injected Data verifier is shared, serialized and cannot leak key or rescue
     assert.equal(removed.status, 200); assert.equal(ave.getKey(), ''); assert.equal(changes.at(-1).reason, 'removed');
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
+
+// The tracking board's wallet-flow channel, projected. The engine's own tests
+// cover what it stores; this covers what leaves the process, which is a
+// whitelist and therefore the only place a new field can silently appear.
+test('a tracked lead carries its wallet flow, its baseline source, and nothing else', async () => {
+  // Relative to now on purpose: the exit warning is a live window, so a fixture
+  // pinned to a calendar instant would pass today and fail tomorrow.
+  const at = Date.now() - 60_000;
+  const record = (over = {}) => ({ chain: 'bsc', address: '0x' + '1'.repeat(40), symbol: 'FISH',
+    source: 'feed', firstSeenAt: at, lastSeenAt: at + 60_000, lastSignalAt: at + 30_000,
+    snapshot: { price: null, marketCap: 20_000, liquidity: 10_000, holders: 100, top10Rate: null, at },
+    latest: { price: null, marketCap: 24_000, liquidity: 11_000, holders: 140, top10Rate: null, at: at + 60_000 },
+    risk: null, reached: { 'price:2': at }, exitedAt: at + 30_000,
+    flow: { kind: 'EXIT', at: at + 30_000, wallets: 2, amountUsd: 330.04, closes: 2, activity: 'BOTH', strength: 'STRONG' },
+    signals: [{ id: 'flow:EXIT', axis: 'flow', kind: 'EXIT', rung: 2, value: 330.04, at: at + 30_000 }], ...over });
+
+  const server = createServer({ settings, supportedChains: ['sol', 'bsc'], controls: { value: {} }, state: { value: {
+    activeChain: 'bsc', status: 'RUNNING', events: [], chainStates: {},
+    track: [
+      record(),
+      record({ address: '0x' + '2'.repeat(40), source: 'private-feed-name', flow: { kind: 'HOLD', at },
+        signals: [{ id: 'flow:HOLD', axis: 'flow', kind: 'HOLD', rung: 1, value: 1, at }] })
+    ],
+    trackSummary: { tracked: 2, active: 2, cooling: 0, atRisk: 0, exiting: 1,
+      quadrants: { POOL_PULLED: 0, DISTRIBUTION: 1, BREAKOUT: 0, WATCH: 1 }, recentSignals: [] }
+  } } });
+
+  const { status, body } = await dispatch(server, '/api/status', { method: 'GET' });
+  assert.equal(status, 200);
+  assert.equal(body.track.length, 2);
+
+  const [flowing, unknown] = body.track;
+  assert.equal(flowing.source, 'feed', 'the baseline source reaches the page so a missing axis can be explained');
+  assert.deepEqual(flowing.flow, { kind: 'EXIT', at: at + 30_000, wallets: 2, amountUsd: 330.04, closes: 2,
+    activity: 'BOTH', strength: 'STRONG' });
+  assert.equal(flowing.exiting, true, 'the exit window is decided once, on this side');
+  assert.equal(flowing.quadrant, 'DISTRIBUTION', 'and the wallets leaving is what put it there');
+  assert.equal(flowing.signals[0].axis, 'flow');
+  assert.equal(flowing.signals[0].kind, 'EXIT');
+
+  // Anything the whitelist does not name must not appear, whichever side of the
+  // boundary it came from.
+  assert.equal('reached' in flowing, false, 'the engine\'s own bookkeeping stays inside');
+  assert.equal('exitedAt' in flowing, false);
+  assert.equal(unknown.source, '', 'an unrecognised feed name is dropped rather than forwarded');
+  assert.equal(unknown.flow, null, 'and an unrecognised flow kind is not rendered as if it meant something');
+  assert.equal(unknown.signals[0].kind, null);
+  assert.equal(body.trackSummary.exiting, 1);
+});

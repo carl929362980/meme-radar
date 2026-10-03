@@ -406,7 +406,7 @@ function emptyScope() {
       tracked: 0, completed5m: 0, completed15m: 0, completed30m: 0,
       completed1h: 0, completed2h: 0, completed6h: 0, completed24h: 0
     },
-    trackSummary: { tracked: 0, active: 0, cooling: 0, atRisk: 0,
+    trackSummary: { tracked: 0, active: 0, cooling: 0, atRisk: 0, exiting: 0,
       quadrants: { POOL_PULLED: 0, DISTRIBUTION: 0, BREAKOUT: 0, WATCH: 0 }, recentSignals: [] },
     sourceHealth: {}, screening: null, lastAttemptAt: 0, lastSuccessAt: 0, lastCompleteSuccessAt: 0,
     lastCycleMs: 0, retryAt: 0
@@ -420,13 +420,16 @@ function addEvent(events, type, message, chain, data = {}) {
 }
 
 export class Scanner {
-  constructor({ provider, secondary = null, goplus = null, state, controls = null, settings = config, sharedRequestIntervalMs = 5 * 60_000 }) {
+  constructor({ provider, secondary = null, goplus = null, feed = null, state, controls = null, settings = config, sharedRequestIntervalMs = 5 * 60_000 }) {
     this.provider = provider;
     this.cycleController = null;
     this.secondary = secondary;
     // Optional tracking enrichment. Never required: a null reader simply means
     // the board runs on the discovery row's own facts.
     this.goplus = goplus;
+    // Optional second tracking source: the discovery feed, which is the only
+    // thing that sees pools younger than the market hot list ever carries.
+    this.feed = feed;
     this.state = state;
     this.controls = controls;
     this.config = settings;
@@ -442,6 +445,21 @@ export class Scanner {
     this.requestedReviews = new Map();
     this.state.value.activeChain = this.activeChain;
     this.state.value.supportedChains = this.supportedChains;
+  }
+
+  // Best-effort by construction: the feed owns its own timers and may simply not
+  // exist (no credential configured), and reading it must never be able to fail
+  // a scan. Every failure degrades to "the board runs on the market feed alone",
+  // which is exactly the board that shipped before this channel existed.
+  feedObservations(chain) {
+    if (!this.feed || typeof this.feed.observations !== 'function') return { pools: [], flows: [] };
+    try {
+      const read = this.feed.observations(chain);
+      return {
+        pools: Array.isArray(read?.pools) ? read.pools : [],
+        flows: Array.isArray(read?.flows) ? read.flows : []
+      };
+    } catch { return { pools: [], flows: [] }; }
   }
 
   // The contract verdict the board shows, reduced to what a warning needs. Only
@@ -726,6 +744,11 @@ export class Scanner {
       // within a per-cycle cap, and a failure leaves them simply absent.
       const followed = auditable.map(({ row }) => ({ chain, address: row.address }));
       const enrichment = await this.enrichTrackedLeads(followed);
+      // The discovery feed's own readings, folded after the market rows so an
+      // already-tracked lead keeps the baseline it was created with. Only the
+      // wallet clusters are unconditional: they are matched by address to any
+      // record, and they are the board's exit warning.
+      const feed = this.feedObservations(chain);
       let tracking = observeTracks(
         prior.track,
         auditable.map(({ row }) => {
@@ -743,7 +766,12 @@ export class Scanner {
           };
         }),
         startedAt,
-        { retentionMs: settings.trackRetentionMs, signalLimit: settings.trackSignalLimit }
+        {
+          retentionMs: settings.trackRetentionMs,
+          signalLimit: settings.trackSignalLimit,
+          pools: feed.pools,
+          flows: feed.flows
+        }
       );
       let events = prior.events || [];
       let lastAuditHealth = prior.sourceHealth?.lastAudit || null;

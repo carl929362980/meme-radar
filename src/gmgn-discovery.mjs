@@ -297,6 +297,49 @@ export class GmgnDiscovery {
     if (state.signals.length > MAX_SIGNALS) state.signals.length = MAX_SIGNALS;
   }
 
+  // What the tracking board consumes. This is the read side of the same state
+  // the panel renders, shaped for the board's own vocabulary: `pools` are leads
+  // with the anchor the feed itself froze, `flows` are the wallet clusters.
+  //
+  // Both are marked with `source` so the board can keep its baseline rule: a
+  // record is only ever advanced by the feed that created it. Two market feeds
+  // disagree on liquidity by up to 5x on the same pool, so a mixed record would
+  // publish the gap between two rulers as a price move.
+  observations(chain) {
+    if (!CHAIN_PLANS[chain]) return { pools: [], flows: [] };
+    const state = this.#state(chain);
+    const at = this.now();
+    // One event per address: the newest. A pool whose wallets both bought and
+    // sold inside the window is reported by whichever happened last, because
+    // that is the fact that is still true.
+    const latest = new Map();
+    for (const signal of state.signals) {
+      if (signal.kind !== 'ENTRY' && signal.kind !== 'EXIT') continue;
+      if (!signal.address || at - Number(signal.at) > this.bufferMs) continue;
+      const previous = latest.get(signal.address);
+      if (previous && Number(previous.at) >= Number(signal.at)) continue;
+      latest.set(signal.address, {
+        address: signal.address, kind: signal.kind, at: signal.at,
+        wallets: signal.wallets, amountUsd: signal.amountUsd, closes: signal.closes,
+        activity: signal.activity, strength: signal.strength
+      });
+    }
+    return {
+      pools: [...state.pools.values()].map((pool) => ({
+        source: 'feed', chain, address: pool.address, symbol: pool.symbol,
+        // The newest reading advances the record; the frozen first sighting is
+        // handed over as the anchor so a card's baseline is the moment the feed
+        // first saw the pool, not the moment a scan cycle happened to pick it up.
+        firstSeenAt: pool.firstSeenAt,
+        baseline: { marketCap: pool.snapshot.marketCap, liquidity: pool.snapshot.liquidity,
+          holders: pool.snapshot.holders, at: pool.firstSeenAt },
+        marketCap: pool.latest.marketCap, liquidity: pool.latest.liquidity,
+        holders: pool.latest.holders, at: pool.latest.at
+      })),
+      flows: [...latest.values()]
+    };
+  }
+
   // The public shape. Provider names are deliberately absent: a consumer of this
   // projection should be able to render it without knowing who supplied the data,
   // and the distribution guard forbids leaking the upstream brand anyway.

@@ -67,6 +67,14 @@ if (state.value.scanProvider !== 'AVE') {
   state.value.scanProvider = 'AVE'; state.save();
 }
 const controls = new RadarControls(config.stateDir, config.supportedChains, state.value.activeChain || config.chain);
+// The signal channel runs beside the AVE pipeline rather than inside it. The two
+// sources disagree on scale - on the same pool their liquidity readings differ by
+// up to 5x - so letting these rows ride the AVE pipeline under AVE's field names
+// would have the change-rate maths quietly comparing two different rulers.
+// It builds only when a key is present, so a stock install is unchanged.
+// Declared before the scanner because the scanner is handed it as its second
+// tracking source below.
+const signals = createGmgnDiscovery({ settings: config, chains: config.supportedChains });
 scanner = new Scanner({ provider: market,
   secondary: new SecondaryValidator(),
   // Optional enrichment for the tracking board: holder concentration and a
@@ -75,15 +83,14 @@ scanner = new Scanner({ provider: market,
   goplus: config.goplusLookupsPerCycle > 0
     ? new GoPlusReader({ timeoutMs: config.goplusTimeoutMs, cacheMs: config.goplusCacheMs, maxPerCycle: config.goplusLookupsPerCycle })
     : null,
-  state, controls, sharedRequestIntervalMs
+  state, controls, sharedRequestIntervalMs,
+  // The tracking board's second source. The market hot list carries no pool
+  // younger than an hour, so without this channel the board would be blind to
+  // exactly the population this product exists to watch — and to the wallet
+  // clusters that only the trade feed can see.
+  feed: signals
 });
 const liveDiscovery = new LiveDiscovery({ provider: market, cacheOnly: true, marketOverlay: new DexBatchMarketOverlay() });
-// The signal channel runs beside the AVE pipeline rather than inside it. The two
-// sources disagree on scale - on the same pool their liquidity readings differ by
-// up to 5x - so letting these rows ride the AVE pipeline under AVE's field names
-// would have the change-rate maths quietly comparing two different rulers.
-// It builds only when a key is present, so a stock install is unchanged.
-const signals = createGmgnDiscovery({ settings: config, chains: config.supportedChains });
 const version = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
 
 if (once) {

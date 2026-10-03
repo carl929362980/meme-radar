@@ -54,6 +54,24 @@ export function trackKey(value) {
   return /^0x[0-9a-f]{40}$/i.test(address) ? address.toLowerCase() : address;
 }
 
+// Wallet flow is the second kind of evidence the board carries, and it is
+// deliberately *not* an axis. An axis needs a baseline and a scale so a change
+// can be read against the first sighting; a cluster of proven wallets leaving is
+// an event that either happened or did not. Two consequences worth stating:
+//   * It is not a market reading, so it carries none of the cross-source hazard
+//     the price/liquidity/holders axes carry - a statement about wallets is
+//     matched to a lead by address, whoever supplied that lead's market facts.
+//   * It cannot be derived from a snapshot at all. "Several wallets are selling
+//     right now" is a delta over a trade feed; the number of wallets that ever
+//     held the token is a different quantity that happens to share its name.
+export const FLOW_KINDS = Object.freeze(['ENTRY', 'EXIT']);
+export const FLOW_ACTIVITIES = Object.freeze(['BOTH', 'KOL', 'SMART']);
+export const FLOW_STRENGTHS = Object.freeze(['VERY_STRONG', 'STRONG', 'MEDIUM']);
+// How long an exit cluster keeps the board's warning lit. Long enough that a
+// later buy cannot erase the warning before anyone has read it, short enough
+// that a lead is not branded for life by one afternoon's rotation.
+export const EXIT_ALERT_MS = 30 * 60_000;
+
 const finite = value => (Number.isFinite(value) ? value : null);
 // A rate keeps zero as a real reading: "no concentration" and "no holders list
 // returned" must not collapse into the same value.
@@ -83,6 +101,28 @@ export function mergeTrackRisk(previous, observation) {
   if (previous?.verdict === 'FATAL' && next?.verdict !== 'FATAL') return previous;
   if (!next || typeof next !== 'object') return previous || null;
   return { verdict: next.verdict || 'UNKNOWN', reasons: Array.isArray(next.reasons) ? next.reasons.slice(0, 8) : [], at: next.at };
+}
+
+// Wallet flow is refreshed on every sighting rather than accumulated, and the
+// newest event wins: a later entry after an earlier exit is a real change of
+// fact and must be shown as one. The exit *timestamp* is kept separately by the
+// caller so the warning survives that change of fact.
+export function mergeTrackFlow(previous, incoming, now = Date.now()) {
+  const kind = FLOW_KINDS.includes(incoming?.kind) ? incoming.kind : null;
+  if (!kind) return previous || null;
+  const at = finite(incoming.at) ?? now;
+  // An out-of-order event never overwrites a newer one: the trade feed can
+  // deliver the same address twice and the board must not walk backwards.
+  if (previous && Number(previous.at) > at) return previous;
+  return {
+    kind,
+    at,
+    wallets: finite(incoming.wallets),
+    amountUsd: finite(incoming.amountUsd),
+    closes: finite(incoming.closes),
+    activity: FLOW_ACTIVITIES.includes(incoming.activity) ? incoming.activity : null,
+    strength: FLOW_STRENGTHS.includes(incoming.strength) ? incoming.strength : null
+  };
 }
 
 // A sparse axis — one the provider only answers for some leads — must not be
@@ -140,6 +180,14 @@ export function classifyTrack(record, now = Date.now()) {
   const price = first.price > 0 && last.price > 0 ? last.price / first.price : null;
   // Risk reads first: a pool already being pulled is not a breakout.
   if (liquidity !== null && liquidity <= 0.4) return 'POOL_PULLED';
+  // A cluster of proven wallets leaving is distribution observed *before* the
+  // price admits it, which is the whole reason the trade feed is read at all:
+  // the wallets move on the way out and the chart moves after them. It is placed
+  // after POOL_PULLED because a pool that has actually been drained is the
+  // stronger fact, and ahead of the price test because a warning that waits for
+  // the price to confirm it has already missed the exit it exists to announce.
+  const exitedAt = Number(record?.exitedAt);
+  if (Number.isFinite(exitedAt) && exitedAt > 0 && now - exitedAt <= EXIT_ALERT_MS) return 'DISTRIBUTION';
   const concentrating = Number.isFinite(first.top10Rate) && Number.isFinite(last.top10Rate)
     && last.top10Rate - first.top10Rate >= 0.1;
   // Distribution is a price that keeps climbing while the supply underneath it
@@ -154,15 +202,41 @@ export function classifyTrack(record, now = Date.now()) {
   return 'WATCH';
 }
 
+// Reads which feed supplied a lead's market facts. Two feeds do not agree on
+// scale — the calibration run measured the same pool's liquidity differing by up
+// to 5x — so a record may only be advanced by the feed that set its baseline.
+// Folding a second feed in would render the gap between two rulers as a market
+// move, and the resulting card would be neither feed's reading. Records written
+// before this field existed, and observations that leave it unset, are treated
+// as the market feed, which is the single-feed behaviour they were created under.
+const sourceOf = value => (typeof value === 'string' && value ? value : 'market');
+const sharesFeed = (record, observation) => sourceOf(record?.source) === sourceOf(observation?.source);
+
 // Folds this cycle's observations into the tracking set. A first sighting fixes
 // the snapshot and anchor; later sightings only advance `latest`, so the
 // baseline a card shows is never silently rewritten.
-export function observeTracks(records, observations, now = Date.now(), { retentionMs = 7 * 24 * 60 * 60_000, signalLimit = 40 } = {}) {
+//
+// Three lists, applied in this order for a reason:
+//   observations  the market feed's leads. Folded first so an already-known lead
+//                 keeps the baseline and feed it was created with.
+//   pools         leads the *discovery* feed saw, which the market feed never
+//                 lists — a hot list carries no pool young enough to matter. They
+//                 can only ever create a record or advance one they created; a
+//                 pool this feed saw cannot displace a market baseline, and a
+//                 market lead cannot be advanced by this feed (see sharesFeed).
+//   flows         wallet-cluster events, attached by address to whatever record
+//                 already exists. They never create a record: a wallet moving is
+//                 not evidence that this product observed a pool, and a baseline
+//                 invented out of a trade would make every card's anchor a guess.
+export function observeTracks(records, observations, now = Date.now(),
+  { retentionMs = 7 * 24 * 60 * 60_000, signalLimit = 40, pools = [], flows = [] } = {}) {
   const byAddress = new Map((Array.isArray(records) ? records : []).map(row => [trackKey(row.address), { ...row }]));
-  for (const observation of observations || []) {
-    if (!observation?.address) continue;
+
+  const fold = observation => {
+    if (!observation?.address) return;
     const key = trackKey(observation.address);
     const previous = byAddress.get(key);
+    if (previous && !sharesFeed(previous, observation)) return;
     const seen = trackSnapshot(observation);
     // The anchor is copied, never mutated in place, so an already-published
     // record cannot change under a reader; then a sparse axis that was still
@@ -170,10 +244,23 @@ export function observeTracks(records, observations, now = Date.now(), { retenti
     const snapshot = previous?.snapshot ? fillMissingBaselines({ ...previous.snapshot }, seen, previous.reached) : { ...seen, at: now };
     const latest = { ...seen, at: now };
     const risk = mergeTrackRisk(previous?.risk, { risk: observation.risk, at: now });
-    const record = previous
-      ? { ...previous, snapshot, latest, risk, lastSeenAt: now, symbol: observation.symbol || previous.symbol }
-      : { chain: observation.chain || '', address: String(observation.address), symbol: observation.symbol || '',
-        firstSeenAt: now, lastSeenAt: now, snapshot, latest, risk, reached: {}, signals: [] };
+    let record;
+    if (previous) {
+      record = { ...previous, snapshot, latest, risk, lastSeenAt: now, symbol: observation.symbol || previous.symbol };
+    } else {
+      // A feed that already holds an earlier reading of its own may hand it over
+      // as the anchor. The board's promise is "first sighting", and the honest
+      // first sighting is the feed's, not the moment this cycle happened to pick
+      // it up — anything else would hide a move that happened in between. The
+      // anchor's timestamp is only taken from the feed alongside the reading it
+      // belongs to: stamping today's numbers with an older time would be a worse
+      // lie than admitting the board only started watching now.
+      const anchorAt = observation.baseline ? (finite(observation.firstSeenAt) ?? now) : now;
+      const anchor = observation.baseline ? trackSnapshot(observation.baseline) : seen;
+      record = { chain: observation.chain || '', address: String(observation.address), symbol: observation.symbol || '',
+        source: sourceOf(observation.source), firstSeenAt: anchorAt, lastSeenAt: now,
+        snapshot: { ...anchor, at: anchorAt }, latest, risk, reached: {}, signals: [] };
+    }
     const signals = dueTrackSignals(record, now);
     if (signals.length) {
       const reached = { ...record.reached };
@@ -183,7 +270,33 @@ export function observeTracks(records, observations, now = Date.now(), { retenti
       record.lastSignalAt = now;
     }
     byAddress.set(key, record);
+  };
+
+  for (const observation of observations || []) fold(observation);
+  for (const pool of pools || []) fold(pool);
+
+  // A flow event is matched by address alone, which is safe for the two chains
+  // this product covers: BSC is `0x`-hex and Solana is base58, so one address can
+  // never name a token on both at once.
+  for (const flow of flows || []) {
+    if (!flow?.address) continue;
+    const record = byAddress.get(trackKey(flow.address));
+    if (!record) continue;
+    const merged = mergeTrackFlow(record.flow, flow, now);
+    if (!merged) continue;
+    const announced = record.flow && record.flow.kind === merged.kind && Number(record.flow.at) === Number(merged.at);
+    record.flow = merged;
+    // The exit timestamp is kept apart from the latest event so a buy arriving a
+    // minute after the cluster left cannot switch the warning off before it was
+    // read. A later entry still replaces `flow` itself: that change of fact is
+    // real and the card must be able to show it.
+    if (merged.kind === 'EXIT') record.exitedAt = Math.max(Number(record.exitedAt) || 0, merged.at);
+    if (announced) continue;
+    record.signals = [{ id: `flow:${merged.kind}`, axis: 'flow', kind: merged.kind,
+      rung: merged.wallets, value: merged.amountUsd, at: merged.at }, ...(record.signals || [])].slice(0, signalLimit);
+    if (merged.at > Number(record.lastSignalAt || 0)) record.lastSignalAt = merged.at;
   }
+
   return [...byAddress.values()].filter(row => now - Number(row.firstSeenAt || 0) <= retentionMs);
 }
 
@@ -194,14 +307,20 @@ export function summarizeTracking(records, now = Date.now(), { coolingMs = 30 * 
   const quadrants = Object.fromEntries(QUADRANTS.map(name => [name, 0]));
   let cooling = 0;
   let atRisk = 0;
+  let exiting = 0;
   for (const row of rows) {
     quadrants[classifyTrack(row, now)]++;
     if (now - Number(row.lastSeenAt || 0) > coolingMs) cooling++;
+    // Counted separately from the quadrant for the same reason the contract
+    // verdict is: "wallets are leaving" is evidence the quadrant reads, but the
+    // number of leads currently carrying that evidence is its own fact.
+    const exitedAt = Number(row.exitedAt);
+    if (Number.isFinite(exitedAt) && exitedAt > 0 && now - exitedAt <= EXIT_ALERT_MS) exiting++;
     // Counted separately from the quadrant: a contract verdict says nothing
     // about price behaviour, and the two must not be blended into one number.
     if (row.risk?.verdict === 'FATAL') atRisk++;
   }
   const signals = rows.flatMap(row => (row.signals || []).map(signal => ({ ...signal, address: row.address, symbol: row.symbol, chain: row.chain })))
     .sort((a, b) => b.at - a.at).slice(0, 20);
-  return { tracked: rows.length, cooling, active: rows.length - cooling, atRisk, quadrants, recentSignals: signals };
+  return { tracked: rows.length, cooling, active: rows.length - cooling, atRisk, exiting, quadrants, recentSignals: signals };
 }

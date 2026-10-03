@@ -42,7 +42,7 @@ function defaultState() {
     // different question from sampling fixed windows, and merging the two would
     // change the cohort calibration is measured on.
     track: [],
-    trackSummary: { tracked: 0, active: 0, cooling: 0,
+    trackSummary: { tracked: 0, active: 0, cooling: 0, exiting: 0,
       quadrants: { POOL_PULLED: 0, DISTRIBUTION: 0, BREAKOUT: 0, WATCH: 0 }, recentSignals: [] },
     sourceHealth: {},
     events: []

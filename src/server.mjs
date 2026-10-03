@@ -7,7 +7,7 @@ import { tokenKey } from './local-store.mjs';
 import { CHART_RISK_VERSION, applyRiskExclusion } from './chart-risk.mjs';
 import { AveError } from './ave-settings.mjs';
 import { activeLiveLeads } from './live-leads.mjs';
-import { classifyTrack } from './tracking.mjs';
+import { classifyTrack, EXIT_ALERT_MS, FLOW_KINDS, FLOW_ACTIVITIES, FLOW_STRENGTHS } from './tracking.mjs';
 
 const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const CHAIN_IDS = new Set(['sol', 'bsc']);
@@ -477,8 +477,28 @@ function publicTrackRisk(source) {
   };
 }
 
+// Wallet flow, as it reaches the page. Every enumerated value is looked up
+// against the engine's own list rather than passed through, because the card
+// keys a translated label off each one; anything unrecognised is dropped instead
+// of rendering as a raw identifier.
+function publicTrackFlow(source) {
+  if (!source || typeof source !== 'object') return null;
+  const kind = FLOW_KINDS.includes(source.kind) ? source.kind : null;
+  if (!kind) return null;
+  return {
+    kind,
+    at: finite(source.at),
+    wallets: finiteOrNull(source.wallets),
+    amountUsd: finiteOrNull(source.amountUsd),
+    closes: finiteOrNull(source.closes),
+    activity: FLOW_ACTIVITIES.includes(source.activity) ? source.activity : null,
+    strength: FLOW_STRENGTHS.includes(source.strength) ? source.strength : null
+  };
+}
+
 function publicTrackSignal(signal = {}) {
-  return { axis: text(signal.axis, 16), rung: finiteOrNull(signal.rung), value: finiteOrNull(signal.value), at: finite(signal.at) };
+  return { axis: text(signal.axis, 16), kind: FLOW_KINDS.includes(signal.kind) ? signal.kind : null,
+    rung: finiteOrNull(signal.rung), value: finiteOrNull(signal.value), at: finite(signal.at) };
 }
 
 function publicTrack(row = {}) {
@@ -486,6 +506,11 @@ function publicTrack(row = {}) {
     chain: text(row.chain, 32),
     address: text(row.address, 80),
     symbol: text(row.symbol || '?', 30),
+    // Which feed set this lead's baseline, and therefore which feed may advance
+    // it. It reaches the page because it explains an otherwise odd-looking card:
+    // a discovery-feed lead has no price axis at all, and "—" beside a dash needs
+    // a reason rather than an apology.
+    source: ['market', 'feed'].includes(row.source) ? row.source : '',
     firstSeenAt: finite(row.firstSeenAt),
     lastSeenAt: finite(row.lastSeenAt),
     lastSignalAt: finite(row.lastSignalAt),
@@ -493,6 +518,14 @@ function publicTrack(row = {}) {
     // always reflects the latest observation rather than a stored verdict.
     quadrant: classifyTrack(row),
     risk: publicTrackRisk(row.risk),
+    // The cluster of wallets that last moved on this lead, and whether that is
+    // currently an exit. The window lives on the engine's side so the page can
+    // never disagree with the quadrant about whether the warning is still lit.
+    // It is read straight from the exit timestamp rather than from the quadrant,
+    // so a pool that has also been drained still reports the wallets leaving
+    // instead of being silenced by the stronger-looking verdict.
+    flow: publicTrackFlow(row.flow),
+    exiting: Number(row.exitedAt) > 0 && Date.now() - Number(row.exitedAt) <= EXIT_ALERT_MS,
     snapshot: publicTrackSnapshot(row.snapshot),
     latest: publicTrackSnapshot(row.latest),
     signals: Array.isArray(row.signals) ? row.signals.slice(0, 20).map(publicTrackSignal) : []
@@ -506,6 +539,10 @@ function publicTrackSummary(source = {}) {
     active: finite(source.active),
     cooling: finite(source.cooling),
     atRisk: finite(source.atRisk),
+    // How many leads are carrying a live wallet-exit warning right now. Kept
+    // beside `atRisk` and the quadrants rather than inside them for the same
+    // reason: it counts evidence, not a verdict.
+    exiting: finite(source.exiting),
     quadrants: {
       POOL_PULLED: finite(quadrants.POOL_PULLED),
       DISTRIBUTION: finite(quadrants.DISTRIBUTION),

@@ -646,6 +646,17 @@
     .track-axis .delta.risk { color: var(--amber); }
     .track-gate { font-size: 14px; white-space: nowrap; }
     .track-cooling { color: var(--muted); }
+    /* The wallet-flow badge is a third kind of statement, so it is neither the
+       quadrant nor the contract verdict: it is the only badge on the card that
+       comes from the trade feed, and it is the one that can arrive before the
+       price has moved at all. Hence its own tone instead of a borrowed one. */
+    .track-flow { font-size: 14px; white-space: nowrap; }
+    .track-flow.exit { color: #ffd9cf; background: #4a2b26; }
+    .track-flow.entry { color: #b6f2d8; background: #1d3b33; }
+    .track-signals .flow-line { color: #ee9b86; }
+    /* Names which feed set this lead's baseline, so a missing axis reads as
+       "this feed does not publish it" rather than as a lost reading. */
+    .track-source { color: #a6babf; }
     .track-signals { border-top: 1px solid #29404a; padding-top: 8px; font-size: 14px; color: #d9bd80; }
     /* Scoped to the card so the shared .live-tag rule cannot repaint a badge. */
     .track-card .track-tag-breakout { color: #b6f2d8; background: #1d3b33; }
@@ -1065,6 +1076,12 @@
       trackRiskHintUnknown: ['已读到合约但关键项缺失，不能当作安全','已讀到合約但關鍵項缺失，不能當作安全','Contract read but key flags are missing, so this is not a clean bill','契約は読取済みだが重要項目が欠落しており安全とは言えません','계약 조회됨, 핵심 항목 누락으로 안전으로 볼 수 없음','قُرئ العقد لكن الحقول الأساسية ناقصة، لذا ليس شهادة أمان'],
       trackRiskHintNone: ['该追踪标的本轮未读到合约数据','該追蹤標的本輪未讀到合約資料','No contract data was read for this lead this cycle','この追跡対象の契約データは今サイクル未取得','이 추적 대상의 계약 데이터를 이번 주기에 읽지 못했습니다','لم تُقرأ بيانات العقد لهذا الهدف في هذه الدورة'],
       trackRiskCount: ['{n} 个合约高危','{n} 個合約高危','{n} with contract risk','{n}件が契約リスクあり','{n}건 계약 위험','{n} بمخاطر عقد'],
+      trackFlowExitTag: ['钱包派发','錢包派發','Wallets distributing','ウォレット売却','지갑 분산 매도','محافظ توزّع'],
+      trackFlowEntryTag: ['钱包买入','錢包買入','Wallets buying','ウォレット買い','지갑 매수','محافظ تشتري'],
+      trackFlowHintExit: ['多个聪明钱/KOL钱包在同一窗口卖出该标的，这是一条退出类预警，先于价格变化出现。','多個聰明錢/KOL錢包在同一視窗賣出該標的，這是一條退出類預警，先於價格變化出現。','Several smart-money or KOL wallets sold this lead inside one window. This is an exit warning and it leads the price.','複数のスマートマネー／KOLウォレットが同一窓で売却しました。これは価格変化に先行する出口警戒です。','여러 스마트머니/KOL 지갑이 같은 구간에서 매도했습니다. 가격 변화에 앞서는 이탈 경보입니다.','باعت عدة محافظ أموال ذكية أو KOL هذا الهدف في نافذة واحدة. هذا تنبيه خروج يسبق تغيّر السعر.'],
+      trackFlowHintEntry: ['多个聪明钱/KOL钱包在同一窗口买入该标的。','多個聰明錢/KOL錢包在同一視窗買入該標的。','Several smart-money or KOL wallets bought this lead inside one window.','複数のスマートマネー／KOLウォレットが同一窓で購入しました。','여러 스마트머니/KOL 지갑이 같은 구간에서 매수했습니다.','اشترت عدة محافظ أموال ذكية أو KOL هذا الهدف في نافذة واحدة.'],
+      trackExitCount: ['{n} 个在派发','{n} 個在派發','{n} distributing','{n}件が売却中','{n}개 분산 매도 중','{n} توزّع'],
+      trackFeedAnchor: ['发现流锚点','發現流錨點','Discovery-feed anchor','発見フィードの基準','발견 흐름 앵커','مرساة مصدر الاكتشاف'],
       trackLiveTag: ['在榜','在榜','On board','掲載中','목록에 있음','مدرج'],
       liveLp: ['流动性','流動性','Liquidity','流動性','유동성','السيولة'],
       radarDisclaimer: ['自动筛选 · 观察线索，非安全保证','自動篩選 · 觀察線索，非安全保證','Automatic screening · Signals, not a safety guarantee','自動選別・安全性を保証しません','자동 필터링 · 안전 보장 아님','فحص تلقائي · إشارات وليست ضمانًا للأمان'],
@@ -2603,7 +2620,8 @@
       });
       const signature = JSON.stringify([cards.map(function (card) {
         return [card.row.chain, card.row.address, card.row.quadrant, card.row.firstSeenAt, card.row.lastSeenAt,
-          card.row.lastSignalAt, card.row.risk, card.first, card.last, card.gate, card.cooling, card.row.signals];
+          card.row.lastSignalAt, card.row.risk, card.row.flow, card.row.exiting, card.row.source,
+          card.first, card.last, card.gate, card.cooling, card.row.signals];
       }), mode, currentLocale, data && data.generatedAt]);
       if (signature === trackFingerprint) return;
       trackFingerprint = signature;
@@ -2617,6 +2635,11 @@
           // Contract risk is reported next to the quadrants, not merged into
           // them: a safety count and a behaviour count are different questions.
           + (number(summary.atRisk) > 0 ? ' · ' + t('trackRiskCount', { n: formatCount(summary.atRisk) }) : '')
+          // The wallet-exit count is a third, separate fact for the same reason:
+          // it counts evidence rather than a verdict, and folding it into the
+          // DISTRIBUTION tally would hide how much of that tally the trade feed
+          // found on its own.
+          + (number(summary.exiting) > 0 ? ' · ' + t('trackExitCount', { n: formatCount(summary.exiting) }) : '')
         : '';
 
       const money = function (value) { return hasFiniteValue(value) ? formatMoney(value) : t('unknown'); };
@@ -2679,6 +2702,14 @@
           shiftRow(t('trackTop10'), first.top10Rate, last.top10Rate)
         ].join('');
         const signalText = function (signal) {
+          // A wallet-cluster event is the one signal on a tracking card that is
+          // not a threshold being crossed, so it names the wallets instead of a
+          // rung: there is no baseline to cross, only a number that arrived.
+          if (signal.axis === 'flow') {
+            const kindKey = signal.kind === 'EXIT' ? 'trackFlowExitTag' : 'trackFlowEntryTag';
+            const wallets = number(signal.rung);
+            return t(kindKey) + (wallets > 0 ? ' · ' + t('signalWalletCount', { n: formatCount(wallets) }) : '');
+          }
           const level = function () {
             if (signal.axis === 'price' || signal.axis === 'holders') return multiple(number(signal.rung));
             if (signal.axis === 'marketCap') return money(number(signal.rung));
@@ -2693,12 +2724,19 @@
         const signals = (row.signals || []).slice(0, 4);
         const signalBlock = signals.length
           ? '<div class="track-signals"><strong>' + escapeHtml(t('trackSignals')) + '</strong>' + signals.map(function (signal) {
-            return '<div><span class="mono">' + escapeHtml(formatClock(signal.at)) + '</span> · ' + escapeHtml(signalText(signal)) + '</div>';
+            return '<div' + (signal.axis === 'flow' ? ' class="flow-line"' : '') + '><span class="mono">'
+              + escapeHtml(formatClock(signal.at)) + '</span> · ' + escapeHtml(signalText(signal)) + '</div>';
           }).join('') + '</div>'
           : '<div class="track-signals"><span class="muted">' + escapeHtml(t('trackNoSignal')) + '</span></div>';
         const baseline = t('trackFirstSeen') + ' ' + escapeHtml(formatClock(row.firstSeenAt))
           + ' · ' + escapeHtml(t('trackAnchorPrice', { v: price(first.price) }))
-          + ' · ' + escapeHtml(t('trackAnchorCap', { v: money(first.marketCap) }));
+          + ' · ' + escapeHtml(t('trackAnchorCap', { v: money(first.marketCap) }))
+          // A lead whose market baseline came from the discovery feed has no
+          // price axis, because that feed does not publish one. Saying so is
+          // cheaper than leaving a reader to conclude the reading was lost.
+          + (row.source === 'feed'
+            ? ' · <span class="track-source" title="' + escapeHtml(t('trackFeedAnchor')) + '">' + escapeHtml(t('trackFeedAnchor')) + '</span>'
+            : '');
         // The third badge is the contract verdict, and it carries its own
         // evidence. An unread or partial contract says so rather than borrowing
         // the gate's authority, so "not assessed" can never read as "safe".
@@ -2711,9 +2749,21 @@
         }();
         const reasons = row.risk && Array.isArray(row.risk.reasons) ? row.risk.reasons : [];
         const contractTitle = reasons.length ? contract.title + ' — ' + reasons.join(', ') : contract.title;
+        // The exit warning badge is shown only while the engine still counts the
+        // cluster as live. `row.flow` on its own is the last event ever seen on
+        // this lead, which may be hours old, and a stale exit badge would be
+        // worse than none: it would read as "selling now" for a token nobody is
+        // selling. The wallet count is carried because the badge's whole claim
+        // is that several wallets moved, not one.
+        const exitBadge = row.exiting === true && row.flow && row.flow.kind === 'EXIT'
+          ? '<span class="live-tag track-flow exit track-gate" title="' + escapeHtml(t('trackFlowHintExit')) + '">'
+            + escapeHtml(t('trackFlowExitTag')) + (number(row.flow.wallets) > 0 ? ' ' + escapeHtml(formatCount(row.flow.wallets)) : '')
+            + '</span>'
+          : '';
         return '<article class="track-card' + (risk ? ' risk' : '') + '">'
           + '<div class="track-card-head"><strong>' + escapeHtml(row.symbol || '?') + '</strong><span>'
           + '<span class="live-tag ' + tagClass + '">' + escapeHtml(t(tag)) + '</span> '
+          + exitBadge + (exitBadge ? ' ' : '')
           + '<span class="live-tag ' + (card.gate ? 'track-tag-gate' : 'track-tag-watch') + ' track-gate" title="' + escapeHtml(t('trackGateHint')) + '">' + escapeHtml(t(card.gate ? 'trackGatePassed' : 'trackGatePending')) + '</span> '
           + '<span class="live-tag ' + contract.cls + ' track-gate" title="' + escapeHtml(contractTitle) + '">' + escapeHtml(t(contract.key)) + '</span></span></div>'
           + '<div class="track-baseline">' + baseline + (card.cooling ? ' · <span class="track-cooling">' + escapeHtml(t('trackCoolingTag')) + '</span>' : '') + '</div>'
