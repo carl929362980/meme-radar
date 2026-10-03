@@ -2720,6 +2720,15 @@
       // nothing but a crossed rung comes last.
       const RANK = { ENTRY: 0, POOL_PULLED: 1, DISTRIBUTION: 1, EXIT: 2, BREAKOUT: 3, WATCH: 4 };
       const rankOf = function (card) { return card.wallet ? RANK[card.wallet.kind] : RANK[card.row.quadrant]; };
+      // Within one side, the size of the cluster leads and the clock only breaks
+      // ties. This mode is called "smart money first", and two wallets and
+      // twenty-five wallets are not the same news: ordering by recency alone let
+      // a two-wallet buy seen five seconds ago outrank a twenty-five-wallet buy
+      // seen three minutes ago. Three minutes is still actionable; two wallets is
+      // still thin. A card with no wallet line has no cluster to compare, so it
+      // counts as zero and falls behind any card that has one.
+      const walletsOf = function (card) { return card.wallet ? number(card.wallet.wallets) : 0; };
+      const amountOf = function (card) { return card.wallet ? number(card.wallet.amountUsd) : 0; };
       cards.sort(function (a, b) {
         if (mode === 'recent') return firstSeenOf(b) - firstSeenOf(a);
         if (mode === 'change') return lastMoveOf(b) - lastMoveOf(a);
@@ -2727,7 +2736,11 @@
           const rank = function (card) { return card.row ? TRACK_RANK[card.row.quadrant] : 5; };
           return rank(a) - rank(b) || lastMoveOf(b) - lastMoveOf(a);
         }
-        return rankOf(a) - rankOf(b) || lastMoveOf(b) - lastMoveOf(a) || firstSeenOf(b) - firstSeenOf(a);
+        return rankOf(a) - rankOf(b)
+          || walletsOf(b) - walletsOf(a)
+          || amountOf(b) - amountOf(a)
+          || lastMoveOf(b) - lastMoveOf(a)
+          || firstSeenOf(b) - firstSeenOf(a);
       });
       // The wallet fields are part of the fingerprint because this board now
       // renders them: a wallet event changing on a lead whose stored row did not
