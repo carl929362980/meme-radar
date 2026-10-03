@@ -74,6 +74,11 @@ export const config = Object.freeze({
   // a lead it has stopped reporting is not a lead. Sharing the week above would
   // keep every pool ever seen and grow the state file without bound.
   feedTrackRetentionMs: 60 * 60_000,
+  // The ceiling above is not what retires most leads — silence is. A lead the
+  // market feed has stopped listing is over well before its week is up, and a
+  // board that waits out the week shows a drained pool for six more days. The
+  // default matches the measured churn of the hot list; see `STALE_LEAD_MS`.
+  trackStaleMs: 2 * 60 * 60_000,
   trackSignalLimit: 40,
   trackCoolingMs: 30 * 60_000,
   // Holder concentration and a contract-safety verdict come from GoPlus, a

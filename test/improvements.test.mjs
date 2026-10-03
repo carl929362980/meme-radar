@@ -69,6 +69,17 @@ test('favorites and notes persist with exact Solana keys, bounded input and safe
   assert.throws(() => controls.annotate({chain:'bsc',address:'../../x',favorite:true,note:'x'}));
 });
 
+test('a fresh install watches every supported chain, and a stored choice still wins', t => {
+  const dir=temp(t);
+  // A chain left out of the default is not a narrower product, it is a chain
+  // nobody watches: its side of the board never refreshes and never says why.
+  assert.deepEqual(new RadarControls(dir,config.supportedChains,'bsc').value.enabledChains,[...config.supportedChains]);
+  const chosen=new RadarControls(dir,config.supportedChains,'bsc');
+  chosen.setChains(['sol']);
+  assert.deepEqual(new RadarControls(dir,config.supportedChains,'bsc').value.enabledChains,['sol'],
+    'a saved selection is the reader\'s, and reloading it must not add chains back');
+});
+
 test('UI approval is case-sensitive on Solana and expires on risk revision changes', () => {
   const html=fs.readFileSync(path.join(root,'public/index.html'),'utf8');
   const start=html.indexOf('function addressIdentity('), end=html.indexOf('function rowMatches(',start);
@@ -85,6 +96,11 @@ test('UI approval is case-sensitive on Solana and expires on risk revision chang
 test('scanner batch audits multiple candidates, saves per-chain history, and multi-chain view does not interrupt work', async t => {
   const dir=temp(t); const state=new RadarState(dir); const controls=new RadarControls(dir,config.supportedChains,'bsc');
   state.value.activeChain='bsc';
+  // Pin the selection this test is about. A fresh install now watches every
+  // supported chain, and the per-cycle audit budget is shared across whichever
+  // chains are enabled, so an implicit selection would make the count below
+  // depend on how many chains the product ships rather than on what is tested.
+  controls.setChains(['bsc']);
   let audited=0;
   const provider={ configured:async()=>true, discover:async()=>Array.from({length:5},(_,i)=>({address:'0x'+String(i+1).padStart(40,'0'),chain:'bsc',marketProvider:'AVE',symbol:'TEST',price:1,market_cap:50000,liquidity:10000,
     launch_at:Math.floor(Date.now()/1000)-1000,volume_5m:500,capturedAt:Date.now(),sourceUpdatedAt:Date.now(),expiresAt:Date.now()+30000,stale:false,

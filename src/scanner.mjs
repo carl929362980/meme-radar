@@ -769,6 +769,7 @@ export class Scanner {
         {
           retentionMs: settings.trackRetentionMs,
           feedRetentionMs: settings.feedTrackRetentionMs,
+          staleMs: settings.trackStaleMs,
           signalLimit: settings.trackSignalLimit,
           pools: feed.pools,
           flows: feed.flows

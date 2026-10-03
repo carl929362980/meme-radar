@@ -205,6 +205,63 @@ test('records outside the retention window are dropped and the summary agrees', 
   assert.equal(cooling.active, 0);
 });
 
+test('a lead the feeds stopped reporting is retired long before its week is up', () => {
+  // The age ceiling is a week; a lead that dropped out of the hot list is over
+  // in two hours. Without this, a pool down to a tenth of its price sits in
+  // front of the reader for six more days, and the board ranks it first.
+  const options = { retentionMs: 7 * 24 * 60 * 60_000, staleMs: 2 * 60 * 60_000 };
+  const records = observeTracks([], [lead()], AT, options);
+
+  const stillWarm = observeTracks(records, [], AT + 60 * 60_000, options);
+  assert.equal(stillWarm.length, 1, 'one silent hour is a pause, not an ending');
+
+  const gone = observeTracks(records, [], AT + 3 * 60 * 60_000, options);
+  assert.equal(gone.length, 0, 'three silent hours is not a lead any more');
+});
+
+test('a lead that is still being reported keeps its anchor however old it is', () => {
+  const options = { retentionMs: 7 * 24 * 60 * 60_000, staleMs: 2 * 60 * 60_000 };
+  let records = observeTracks([], [lead()], AT, options);
+  // Re-sighted on every cycle for a full day: old, but never silent.
+  for (let hour = 1; hour <= 24; hour++) {
+    records = observeTracks(records, [lead({ price: 0.0001 * (1 + hour / 100) })], AT + hour * 60 * 60_000, options);
+  }
+  assert.equal(records.length, 1, 'a pool the feed keeps listing is still a lead');
+  assert.equal(records[0].firstSeenAt, AT, 'and it keeps the anchor it was found with');
+  assert.equal(records[0].lastSeenAt, AT + 24 * 60 * 60_000);
+});
+
+test('a sighting after a long silence starts a new record, not a continuation', () => {
+  // The board is not always watching: a chain can be switched off and switched
+  // back on. Comparing today's price to an anchor from before a day-long gap
+  // would read the gap as a market move, which this file refuses everywhere
+  // else it appears.
+  const options = { retentionMs: 7 * 24 * 60 * 60_000, staleMs: 2 * 60 * 60_000 };
+  let records = observeTracks([], [lead()], AT, options);
+  records = observeTracks(records, [lead({ price: 0.0002 })], AT + 60_000, options);
+  assert.deepEqual(records[0].signals.map(s => s.id), ['price:2']);
+
+  // A day later the same address comes back at a quarter of the old price.
+  records = observeTracks(records, [lead({ price: 0.000025 })], AT + 24 * 60 * 60_000, options);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].firstSeenAt, AT + 24 * 60 * 60_000, 'the anchor is the sighting that resumed, not the one before the gap');
+  assert.equal(records[0].snapshot.price, 0.000025);
+  assert.deepEqual(records[0].signals, [], 'and a rung crossed before a gap is not still crossed after it');
+});
+
+test('a nonsense silence window falls back to the shipped one', () => {
+  const records = observeTracks([], [lead()], AT);
+  assert.equal(observeTracks(records, [], AT + 3 * 60 * 60_000, { staleMs: 0 }).length, 0,
+    'a zero window must not mean "never retire"');
+  assert.equal(observeTracks(records, [], AT + 3 * 60 * 60_000, { staleMs: 'soon' }).length, 0);
+});
+
+test('a record with no readable timestamp is retired rather than kept forever', () => {
+  const orphan = { chain: 'bsc', address: EVM, symbol: 'FISH', source: 'market', reached: {}, signals: [] };
+  const records = observeTracks([orphan], [], AT, { retentionMs: 7 * 24 * 60 * 60_000 });
+  assert.equal(records.length, 0);
+});
+
 // Wallet flow is the board's only exit-class evidence, and it is the one kind of
 // evidence that cannot come from a market snapshot at all: "several proven
 // wallets are selling" is a delta over a trade feed. The tests below pin the

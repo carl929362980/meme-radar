@@ -86,7 +86,40 @@ export const EXIT_ALERT_MS = 30 * 60_000;
 // enough to watch a curve travel and short enough that the board stays a board.
 export const FEED_LEAD_RETENTION_MS = 60 * 60_000;
 
+// A record's age is a ceiling, not a reason to keep it. A lead the market feed
+// has stopped listing is not a lead any more, it is a memory - the sentence the
+// feed window above is built on, applied to the other clock.
+//
+// Measured on the live board when this was written: every lead that went quiet
+// had been observed repeatedly for at most 114 minutes before the hot list
+// dropped it, and none of them came back. Seventeen of forty-nine records had
+// been silent for over six hours, five of those since the minute they were
+// created, and all six Solana records were a day old. Waiting out the full week
+// does not keep any of them alive; it parks them in front of the reader, and
+// because the board ranks a drained pool first, the graveyard is the first
+// thing on screen. A pool down to a tenth of its price is a real finding once
+// and clutter for the following six days.
+//
+// Silence this long is therefore read as the lead having ended, in two places:
+// the record leaves the board, and a sighting after such a gap starts a new
+// record instead of advancing the old one. The second half is not decoration.
+// The board is not always watching - a chain can be switched off, or the
+// provider can pause - and a record that ages through such a gap would other-
+// wise come back holding an anchor from before it, so "first seen -> now" would
+// be reading the gap rather than a market move. That is the same two-rulers
+// hazard this file already refuses for a change of source.
+export const STALE_LEAD_MS = 2 * 60 * 60_000;
+
 const finite = value => (Number.isFinite(value) ? value : null);
+
+// How long a record has gone without a real sighting. A record that never
+// carried one falls back to its first, and a record carrying neither reads as
+// infinitely silent - the same treatment the age filter gives an unreadable
+// timestamp, so an unparseable row is retired rather than kept forever.
+function silentFor(record, now) {
+  const last = Number(record?.lastSeenAt) || Number(record?.firstSeenAt) || 0;
+  return now - last;
+}
 // A rate keeps zero as a real reading: "no concentration" and "no holders list
 // returned" must not collapse into the same value.
 const rateOrNull = value => {
@@ -243,13 +276,22 @@ const sharesFeed = (record, observation) => sourceOf(record?.source) === sourceO
 //                 not evidence that this product observed a pool, and a baseline
 //                 invented out of a trade would make every card's anchor a guess.
 export function observeTracks(records, observations, now = Date.now(),
-  { retentionMs = 7 * 24 * 60 * 60_000, feedRetentionMs = FEED_LEAD_RETENTION_MS, signalLimit = 40, pools = [], flows = [] } = {}) {
+  { retentionMs = 7 * 24 * 60 * 60_000, feedRetentionMs = FEED_LEAD_RETENTION_MS,
+    staleMs = STALE_LEAD_MS, signalLimit = 40, pools = [], flows = [] } = {}) {
+  const quiet = Number(staleMs);
+  const staleLimit = Number.isFinite(quiet) && quiet > 0 ? quiet : STALE_LEAD_MS;
   const byAddress = new Map((Array.isArray(records) ? records : []).map(row => [trackKey(row.address), { ...row }]));
 
   const fold = observation => {
     if (!observation?.address) return;
     const key = trackKey(observation.address);
-    const previous = byAddress.get(key);
+    const found = byAddress.get(key);
+    // A record the feeds stopped reporting is over, so this sighting is a new
+    // lead rather than a continuation of that one: it takes a fresh anchor, a
+    // fresh baseline and an empty set of crossed rungs. Carrying the old anchor
+    // forward would report the silence itself as a market move.
+    const previous = found && silentFor(found, now) <= staleLimit ? found : null;
+    if (found && !previous) byAddress.delete(key);
     if (previous && !sharesFeed(previous, observation)) return;
     const seen = trackSnapshot(observation);
     // The anchor is copied, never mutated in place, so an already-published
@@ -328,7 +370,12 @@ export function observeTracks(records, observations, now = Date.now(),
   // board's own: it would be the same hoard under a different name.
   const feedKeep = Math.min(Number(feedRetentionMs) || retentionMs, retentionMs);
   return [...byAddress.values()]
-    .filter(row => now - Number(row.firstSeenAt || 0) <= (sourceOf(row.source) === 'feed' ? feedKeep : retentionMs));
+    .filter(row => now - Number(row.firstSeenAt || 0) <= (sourceOf(row.source) === 'feed' ? feedKeep : retentionMs))
+    // ...and neither ceiling is what actually retires a market lead. One the
+    // feeds have stopped listing is over in two hours, whether or not anyone was
+    // watching at the moment it went quiet. A feed lead never reaches this
+    // window - its own hour is the shorter clock, as it should be.
+    .filter(row => silentFor(row, now) <= staleLimit);
 }
 
 const QUADRANTS = Object.freeze(['POOL_PULLED', 'DISTRIBUTION', 'BREAKOUT', 'WATCH']);

@@ -49,7 +49,18 @@ export class RadarControls {
   constructor(dir, chains, initialChain) {
     this.file = path.join(dir, 'preferences.json');
     this.chains = chains;
-    const defaults = { enabledChains: [initialChain], annotations: {} };
+    // Both supported chains are watched from the first run. A single-chain
+    // default is not a smaller product, it is half of one: the chain that is
+    // left out is never requested, so its side of the board is not stale, it is
+    // frozen at whenever it was last scanned, and nothing on the board says so.
+    // Measured: with Solana switched off, its six tracked leads were a full day
+    // old while the BSC half refreshed every eight minutes, and the only hint
+    // was a chain switcher a reader had no reason to open.
+    //
+    // The real cost is that the provider's request spacing is shared, so both
+    // chains are scanned half as often as one would be. That is a trade a reader
+    // can see and undo in one click; a silently unwatched chain is not.
+    const defaults = { enabledChains: [...chains].slice(0, 3), annotations: {} };
     this.value = { ...defaults, ...readJsonWithBackup(this.file, defaults).value };
     this.value.enabledChains = [...new Set(this.value.enabledChains)].filter(x => chains.includes(x)).slice(0, 3);
     if (!this.value.enabledChains.length) this.value.enabledChains = [initialChain];
