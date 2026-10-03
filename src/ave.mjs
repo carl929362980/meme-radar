@@ -471,7 +471,8 @@ function readLock(lock) {
     finally { if (fd !== undefined) closeSync(fd); }
   }
   const match = typeof text === 'string' ? LOCK_OWNER.exec(text.trim()) : null;
-  return { stat, text, alive: match ? processAlive(Number(match[1])) : null };
+  const owner = match ? Number(match[1]) : null;
+  return { stat, text, alive: owner === null ? null : processAlive(owner), owner };
 }
 
 // Two independent proofs of staleness. The age bound is far beyond the
@@ -483,22 +484,47 @@ const lockStale = held => held.alive === false || held.stat.mtimeMs + LOCK_STALE
 // owner (or to a peer that is reclaiming it right now).
 function claimLock(lock) {
   for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt++) {
-    let fd;
+    let fd = null, resumed = false;
     try { fd = openSync(lock, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600); }
     catch (error) {
       if (error?.code !== 'EEXIST') throw error;
       const held = readLock(lock);
       if (!held) continue;                        // Released meanwhile: race for it again.
-      if (!lockStale(held)) return null;          // A live owner always keeps its lock.
-      const verifier = readLock(lock);            // Never remove a record that changed meanwhile.
-      if (!verifier || verifier.text !== held.text) return null;
-      try { unlinkSync(lock); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
-      continue;
+      if (held.owner !== process.pid) {
+        if (!lockStale(held)) return null;        // A live owner always keeps its lock.
+        const verifier = readLock(lock);          // Never remove a record that changed meanwhile.
+        if (!verifier || verifier.text !== held.text) return null;
+        try { unlinkSync(lock); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+        continue;
+      }
+      // A record that names this very process cannot belong to a live foreign
+      // owner. Either this process wrote it and then failed to remove it on
+      // release - a delete that is refused stays refused, so without this the
+      // ledger is unreachable for the rest of the process's life - or it was
+      // written by a process that has since died and whose PID we inherited.
+      // Both are ours, and both are taken by OVERWRITING: the takeover must not
+      // depend on the very delete whose refusal brought us here, while the
+      // foreign-owner path above keeps its unlink so that two reclaimers can
+      // never both win (there, only an atomic create decides the winner).
+      // The string flag, not raw numbers: on Windows libuv maps the flags
+      // itself and rejects a bare O_WRONLY|O_TRUNC with EINVAL, so a numeric
+      // takeover would fail exactly where it is needed.
+      try { fd = openSync(lock, 'w', 0o600); }
+      catch (error) { if (error?.code === 'ENOENT') continue; throw error; }
+      resumed = true;
     }
     const token = randomUUID();
     try { writeFileSync(fd, `${process.pid}:${token}\n`); fsyncSync(fd); }
-    catch (error) { closeSync(fd); try { unlinkSync(lock); } catch { /* Nothing else owns this path yet. */ } throw error; }
+    catch (error) {
+      closeSync(fd);
+      if (!resumed) try { unlinkSync(lock); } catch { /* Nothing else owns this path yet. */ }
+      throw error;
+    }
     closeSync(fd);
+    // Only one writer in this process can produce a record naming this process,
+    // so the re-read is a formality; it is kept so that a takeover that did not
+    // land is retried rather than believed.
+    if (resumed && readLock(lock)?.text?.trim() !== `${process.pid}:${token}`) continue;
     return token;
   }
   return null;
@@ -506,6 +532,15 @@ function claimLock(lock) {
 
 // Only the exact record this transaction wrote is released, so a lock that was
 // reclaimed and re-acquired meanwhile is never deleted by its predecessor.
+//
+// A release that fails is not cosmetic: the record stays on disk and the next
+// claim finds an owner that is this very process. That case is recoverable -
+// claimLock takes over a record naming its own process by overwriting it, so a
+// refused delete costs one transaction instead of the ledger. The failure is
+// still reported rather than swallowed, because a refused delete is a fact
+// about the filesystem worth seeing. Seen in practice: a filesystem guard
+// refused the unlink, and the only symptom for the following hour was one
+// "budget could not be saved" line per cycle with nothing saying why.
 function releaseLock(lock, token) {
   const held = readLock(lock);
   if (held && held.text?.trim() === `${process.pid}:${token}`) unlinkSync(lock);
@@ -540,10 +575,27 @@ export function createAveBudgetStore(directory) {
         renameSync(temporary, file); temporary = undefined;
         if (process.platform !== 'win32') { const d = openSync(folder, constants.O_RDONLY); try { fsyncSync(d); } finally { closeSync(d); } }
         return clone(next);
-      } catch (error) { if (error instanceof AveError) throw error; throw fail('BUDGET_STORE', 503); }
+      } catch (error) {
+        if (error instanceof AveError) throw error;
+        // Same reasoning as the client's wrapper: one code covers filesystem
+        // faults, a rejected update and a bug in the merge, and the only visible
+        // symptom is a paused request every cycle. The cause goes to the log.
+        console.error('预算账本写入失败：' + String(error?.name || 'Error') + ' ' + String(error?.message || '').slice(0, 200));
+        throw fail('BUDGET_STORE', 503);
+      }
       finally {
         if (temporary) try { unlinkSync(temporary); } catch { /* Best effort for this owned temp only. */ }
-        if (token !== undefined) try { releaseLock(lock, token); } catch { /* Left-over lock remains fail-closed. */ }
+        if (token !== undefined) {
+          try { releaseLock(lock, token); }
+          catch (error) {
+            // The record stays behind and the next claim takes it over, so this
+            // costs no transaction - but it is reported with its cause, because
+            // "the lock was not released" alone sent one investigation looking
+            // for a rate limit that was never there.
+            console.error('预算锁未能释放（下次事务将就地接管）：'
+              + String(error?.code || error?.name || 'Error') + ' ' + String(error?.message || '').slice(0, 200));
+          }
+        }
       }
     }
   };
@@ -641,7 +693,16 @@ export class AveClient {
       });
       this.#budget = next; this.#syncPauses(next);
       return next;
-    } catch (error) { if (error instanceof AveError) throw error; throw fail('BUDGET_STORE', 503); }
+    } catch (error) {
+      if (error instanceof AveError) throw error;
+      // Everything that is not already classified collapses to one code, which
+      // says "the ledger could not be saved" without saying why. A bug in the
+      // merge is indistinguishable from a filesystem fault under that code, and
+      // the only symptom is a request pause every cycle. Keep the caller's code
+      // - the contract must not change - but leave the real cause in the log.
+      console.error('预算事务失败：' + String(error?.name || 'Error') + ' ' + String(error?.message || '').slice(0, 200));
+      throw fail('BUDGET_STORE', 503);
+    }
   }
   #syncPauses(budget) {
     const at = this.#now();
