@@ -609,21 +609,10 @@
     .live-evidence { padding: 9px 0; border-top: 1px solid #29404a; color: #d9bd80; font-size: 14px; }
     .live-card .addr { overflow-wrap: anywhere; }
     .live-grid .empty { grid-column: 1 / -1; }
-    /* The signal stream leads the page: it is the only panel whose rows are
-       statements about wallets rather than about a market. Every card carries the
-       wallets, the money and the pool anchor together, so a signal can be judged
-       on the page instead of on trust. Entry is warm and exit is cool, following
-       the local convention that a rise is red and a fall is green. */
-    .signal-card { border: 1px solid #2d424c; border-left-width: 4px; border-radius: 10px; padding: 14px; background: #101b22; min-width: 0; }
-    .signal-card.signal-entry { border-left-color: #d9553a; }
-    .signal-card.signal-exit { border-left-color: #35a06a; }
-    .signal-card.signal-new { border-left-color: #668ba2; }
-    .signal-card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-    .signal-card-head strong { font-size: 20px; overflow-wrap: anywhere; }
-    .signal-reason { margin: 10px 0 6px; font-size: 16px; color: #e8eef2; }
-    .signal-reason b { font-size: 16px; }
-    .signal-anchor { color: #a6babf; font-size: 14px; }
-    .signal-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    /* The wallet stream used to be its own panel with its own card. Both are
+       gone: wallet rows are now drawn on the tracking card, which is the only
+       place a lead can be read whole. Styling kept for markup nothing produces
+       would only make the page look like it still has two panels. */
     /* The pre-flight verdict, shown on both panels. Colour is the state, and the
        reasons sit beside it rather than replacing it: "caution" on its own says
        nothing actionable. Named neutrally because the signal stream and the
@@ -663,9 +652,24 @@
        comes from the trade feed, and it is the one that can arrive before the
        price has moved at all. Hence its own tone instead of a borrowed one. */
     .track-flow { font-size: 14px; white-space: nowrap; }
-    .track-flow.exit { color: #ffd9cf; background: #4a2b26; }
-    .track-flow.entry { color: #b6f2d8; background: #1d3b33; }
+    /* A wallet buy is a rise and a wallet sell is a fall, so this badge follows
+       the same convention the price axis and the signal cards already follow -
+       red up, green down. It had been painted the other way round, which was
+       invisible while the two panels stood apart and would have become a
+       contradiction on the face of one card the moment they were merged. */
+    .track-flow.exit { color: #b6f2d8; background: #1d3b33; }
+    .track-flow.entry { color: #ffd9cf; background: #4a2b26; }
     .track-signals .flow-line { color: #ee9b86; }
+    /* Where the two feeds actually meet: the trade feed's event, printed on the
+       tracking board. It is not an axis (a change between two readings) and not
+       a badge (a verdict) - it is an event - so it states the side, the wallets,
+       the money and the strength in one line and takes the same red-buy /
+       green-sell tone as everything else on the page. */
+    .track-money { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 14px; }
+    .track-money strong { font-size: 15px; }
+    .track-money .muted { color: #a6babf; }
+    .track-money.entry { color: #ee9b86; }
+    .track-money.exit { color: #8fd3ae; }
     /* Names which feed set this lead's baseline, so a missing axis reads as
        "this feed does not publish it" rather than as a lost reading. */
     .track-source { color: #a6babf; }
@@ -798,15 +802,6 @@
     </section>
 
 
-    <section id="signalPanel" class="panel" aria-labelledby="signalTitle">
-      <div class="live-heading">
-        <div><h2 id="signalTitle" data-i18n="signalTitle">聪明钱共振</h2><small data-i18n="signalDisclaimer">首见锚点 · 多钱包同向 · 含退出预警</small></div>
-        <span id="signalState" role="status" aria-live="polite" class="live-tag"></span>
-      </div>
-      <div id="signalMeta" class="live-meta"></div>
-      <div id="signalRows" class="live-grid"><div class="empty" data-i18n="signalEmpty">正在累积聪明钱成交，暂无共振信号</div></div>
-    </section>
-
     <section id="livePanel" class="panel live-panel" aria-labelledby="liveTitle">
       <div class="live-heading">
         <div><h2 id="liveTitle" data-i18n="liveTitle">候选雷达</h2><small data-i18n="radarDisclaimer">自动筛选 · 观察线索，非安全保证</small></div>
@@ -825,17 +820,19 @@
       <div id="liveRows" class="live-grid"><div class="empty" data-i18n="preparing">准备中</div></div>
     </section>
 
-    <section id="trackPanel" class="panel" aria-labelledby="trackTitle">
+    <section id="trackPanel" class="panel live-panel" aria-labelledby="trackTitle">
       <div class="live-heading">
-        <div><h2 id="trackTitle" data-i18n="trackTitle">追踪中</h2><small data-i18n="trackDisclaimer">首见对比 · 变化即信号</small></div>
-        <select id="trackSort" class="field" data-i18n-aria="trackSort" aria-label="追踪排序">
-          <option value="risk" selected data-i18n="trackSortRisk">风险优先</option>
+        <div><h2 id="trackTitle" data-i18n="boardTitle">聪明钱 · 追踪</h2><small data-i18n="boardDisclaimer">钱包在动 + 池子在变 · 首见对比</small></div>
+        <span id="trackState" role="status" aria-live="polite" class="live-tag"></span>
+        <select id="trackSort" class="field" data-i18n-aria="boardSort" aria-label="看板排序">
+          <option value="signal" selected data-i18n="boardSortSignal">聪明钱优先</option>
+          <option value="risk" data-i18n="trackSortRisk">风险优先</option>
           <option value="change" data-i18n="trackSortChange">最近变化优先</option>
           <option value="recent" data-i18n="trackSortRecent">最近出现优先</option>
         </select>
       </div>
       <div id="trackMeta" class="live-meta"></div>
-      <div id="trackRows" class="live-grid"><div class="empty" data-i18n="trackEmpty">暂无追踪对象</div></div>
+      <div id="trackRows" class="live-grid"><div class="empty" data-i18n="boardEmpty">暂无值得看的标的</div></div>
     </section>
 
     <section class="panel voice-panel" aria-label="Voice alerts">
@@ -1028,6 +1025,22 @@
       liveCap: ['市值','市值','Market cap','時価総額','시가총액','القيمة السوقية'],
       trackTitle: ['追踪中','追蹤中','Tracking','追跡','추적 중','قيد التتبع'],
       trackDisclaimer: ['首见对比 · 变化即信号','首見對比 · 變化即訊號','First-sighting comparison · the change is the signal','初回観測との比較 · 変化がシグナル','최초 관측 대비 · 변화가 신호','مقارنة بأول رصد · التغير هو الإشارة'],
+      // One board, two measurements of the same lead. The wallet feed says who
+      // is moving; the tracking feed says how the pool has changed. Measured
+      // before merging, they overlap almost not at all - on Solana one single
+      // signal address out of eighty-one was also on the board - so this is not
+      // a merge of duplicates, it is putting the two halves of one picture
+      // beside each other instead of asking the reader to hold both in mind.
+      boardTitle: ['聪明钱 · 追踪','聰明錢 · 追蹤','Smart money · tracking','スマートマネー・追跡','스마트머니 · 추적','الأموال الذكية · التتبع'],
+      boardDisclaimer: ['钱包在动 + 池子在变 · 首见对比','錢包在動 + 池子在變 · 首見對比','Wallets moving + pools moving · against first sighting','ウォレットとプールの動き・初回観測との比較','지갑과 풀의 움직임 · 최초 관측 대비','حركة المحافظ والبرك · مقارنة بأول رصد'],
+      boardSort: ['看板排序','看板排序','Board order','ボードの並び','보드 정렬','ترتيب اللوحة'],
+      boardSortSignal: ['聪明钱优先','聰明錢優先','Smart money first','スマートマネー優先','스마트머니 우선','الأموال الذكية أولاً'],
+      boardEmpty: ['暂无值得看的标的','暫無值得看的標的','Nothing worth showing yet','表示する価値のある対象はまだありません','볼 만한 대상이 아직 없습니다','لا شيء يستحق العرض بعد'],
+      boardMoneyTotal: ['合计 {amount}','合計 {amount}','{amount} total','合計 {amount}','합계 {amount}','{amount} إجمالاً'],
+      // The discovery half of the wallet feed is a sighting, not an event, so it
+      // never takes a row of its own - but it is still reported, because a board
+      // that silently swallows part of its feed cannot be told from a quiet one.
+      boardNewPools: ['新池 {n} 个未上板','新池 {n} 個未上板','{n} new pools not shown','新規プール {n} 件は非表示','신규 풀 {n}개 미표시','{n} برك جديدة غير معروضة'],
       signalTitle: ['聪明钱共振','聰明錢共振','Smart-money convergence','スマートマネー共振','스마트머니 공명','تقارب الأموال الذكية'],
       signalDisclaimer: ['首见锚点 · 多钱包同向 · 含退出预警','首見錨點 · 多錢包同向 · 含退出預警','First-sighting anchor · several wallets one way · exits included','初回アンカー・複数ウォレット同方向・出口警戒あり','최초 관측 앵커 · 다중 지갑 동방향 · 이탈 경보 포함','مرساة أول رصد · عدة محافظ باتجاه واحد · مع تنبيه الخروج'],
       signalEmpty: ['正在累积聪明钱成交，暂无共振信号','正在累積聰明錢成交，暫無共振訊號','Accumulating smart-money trades; no convergence yet','スマートマネーの約定を蓄積中。共鳴シグナルはまだありません','스마트머니 체결 누적 중 · 아직 공명 신호 없음','يجري تجميع صفقات الأموال الذكية؛ لا تقارب بعد'],
@@ -1096,7 +1109,7 @@
       trackTagDistribution: ['出货警示','出貨警示','Distribution','分配売り','분배 경고','توزيع'],
       trackTagPool: ['撤池前兆','撤池前兆','Pool pulled','流動性引き上げ','풀 인출 징후','سحب السيولة'],
       trackTagWatch: ['观察','觀察','Watch','様子見','관망','مراقبة'],
-      trackBrief: ['{n} 个追踪 · 更新 {time}','{n} 個追蹤 · 更新 {time}','{n} tracked · updated {time}','{n}件を追跡 · 更新 {time}','{n}개 추적 · 갱신 {time}','{n} قيد التتبع · حُدّث {time}'],
+      trackBrief: ['{n} 个标的 · 更新 {time}','{n} 個標的 · 更新 {time}','{n} leads · updated {time}','{n} 件 · 更新 {time}','{n}개 종목 · 갱신 {time}','{n} هدف · حُدّث {time}'],
       trackAnchorPrice: ['首见价 {v}','首見價 {v}','first price {v}','初回価格 {v}','최초 가격 {v}','أول سعر {v}'],
       trackAnchorCap: ['首见市值 {v}','首見市值 {v}','first cap {v}','初回時価総額 {v}','최초 시총 {v}','أول قيمة {v}'],
       trackNoSignal: ['暂未跨阈','暫未跨閾','No threshold crossed yet','まだしきい値未突破','아직 임계값 미돌파','لم تُتجاوز أي عتبة بعد'],
@@ -1712,9 +1725,10 @@
     // The signal stream keeps its own snapshot: it is a different measurement
     // from the candidate radar, and letting one overwrite the other would make a
     // rendering failure look like a data failure.
+    // The wallet feed's last reading. It is drawn inside the board rather than in
+    // a panel of its own, so it lives beside the tracking renderer's state.
     let signalData = null;
     let signalBusy = false;
-    let signalFingerprint = '';
     // The tracking board keeps its own fingerprint, quadrant order and cooling
     // window. They live here rather than beside renderTrack so the board can be
     // re-rendered independently of the candidate radar.
@@ -2649,39 +2663,99 @@
     // from. A card that showed only the current value would collapse back into
     // the candidate radar, and one that showed only the change would hide its
     // baseline, so each axis renders "first seen → latest → change" as one row.
+    // The board carries two different measurements of the same leads, joined on
+    // the address: what the trade feed saw wallets do, and what the tracking set
+    // saw the pool do. Measured before merging them, the two barely intersect -
+    // on Solana one signal address in eighty-one was also on the board - so this
+    // is not deduplication. It is the one place a lead can be judged on both
+    // halves at once, instead of on whichever panel it happened to reach first.
     function renderTrack() {
       const data = lastData;
+      const chain = activeChain(data);
       const tracked = data && Array.isArray(data.track) ? data.track : [];
+      const stream = signalData && signalData.chain === chain && Array.isArray(signalData.signals) ? signalData.signals : [];
       const now = Date.now();
+      // A lead that merely appeared in the trade feed is a sighting, not an
+      // event: it carries no side, no wallets and no money, and it duplicates
+      // what the discovery feed has already reported. It is counted and printed
+      // in the summary rather than given a row, because a board that silently
+      // drops part of its feed cannot be told apart from a quiet market.
+      const walletBy = new Map();
+      let newPools = 0;
+      for (const signal of stream) {
+        if (signal.kind === 'NEW_POOL') { newPools += 1; continue; }
+        const key = addressIdentity(signal.address);
+        const held = walletBy.get(key);
+        // One row per lead, so the newest event wins: an hour-old exit still
+        // sitting in the feed must not speak for a lead bought again since.
+        if (!held || number(signal.at) >= number(held.at)) walletBy.set(key, signal);
+      }
       // Contract safety and market behaviour are two verdicts, so the gate badge
       // is looked up from the reviewed candidates and never folded into the
       // quadrant. An address that has not cleared the gate simply says so.
       const reviewed = new Set((rowsCache || []).filter(function (row) { return backendDisposition(row) === 'chain'; })
         .map(function (row) { return String(row.chain || '').toLowerCase() + ':' + addressIdentity(row.address); }));
       const mode = byId('trackSort').value;
-      const cards = tracked.map(function (row) {
-        return { row: row, first: row.snapshot || {}, last: row.latest || {},
+      const cards = [];
+      const onBoard = new Set();
+      for (const row of tracked) {
+        const key = addressIdentity(row.address);
+        onBoard.add(key);
+        cards.push({ row: row, wallet: walletBy.get(key) || null, first: row.snapshot || {}, last: row.latest || {},
           gate: reviewed.has(String(row.chain || '').toLowerCase() + ':' + addressIdentity(row.address)),
-          cooling: now - number(row.lastSeenAt) > TRACK_COOLING_MS };
-      }).sort(function (a, b) {
-        if (mode === 'recent') return number(b.row.firstSeenAt) - number(a.row.firstSeenAt);
-        if (mode === 'change') return number(b.row.lastSignalAt) - number(a.row.lastSignalAt);
-        return TRACK_RANK[a.row.quadrant] - TRACK_RANK[b.row.quadrant]
-          || number(b.row.lastSignalAt) - number(a.row.lastSignalAt)
-          || number(b.row.firstSeenAt) - number(a.row.firstSeenAt);
+          cooling: now - number(row.lastSeenAt) > TRACK_COOLING_MS });
+      }
+      // And the other direction: a wallet cluster on a lead the tracking set has
+      // never held. This is the majority of the feed, and until now it could only
+      // be shown on a panel that knew nothing about the pool behind it.
+      for (const entry of walletBy) {
+        if (onBoard.has(entry[0])) continue;
+        cards.push({ row: null, wallet: entry[1], first: {}, last: {}, gate: false, cooling: false });
+      }
+      const firstSeenOf = function (card) { return card.row ? number(card.row.firstSeenAt) : number(card.wallet.firstSeenAt); };
+      const lastMoveOf = function (card) { return card.row ? number(card.row.lastSignalAt) : number(card.wallet.at); };
+      // Which side moved leads the default order, because "wallets are buying" is
+      // the one thing on this board a reader can act on. A risk quadrant and a
+      // wallet exit still outrank an ordinary rung crossing, and a lead with
+      // nothing but a crossed rung comes last.
+      const RANK = { ENTRY: 0, POOL_PULLED: 1, DISTRIBUTION: 1, EXIT: 2, BREAKOUT: 3, WATCH: 4 };
+      const rankOf = function (card) { return card.wallet ? RANK[card.wallet.kind] : RANK[card.row.quadrant]; };
+      cards.sort(function (a, b) {
+        if (mode === 'recent') return firstSeenOf(b) - firstSeenOf(a);
+        if (mode === 'change') return lastMoveOf(b) - lastMoveOf(a);
+        if (mode === 'risk') {
+          const rank = function (card) { return card.row ? TRACK_RANK[card.row.quadrant] : 5; };
+          return rank(a) - rank(b) || lastMoveOf(b) - lastMoveOf(a);
+        }
+        return rankOf(a) - rankOf(b) || lastMoveOf(b) - lastMoveOf(a) || firstSeenOf(b) - firstSeenOf(a);
       });
+      // The wallet fields are part of the fingerprint because this board now
+      // renders them: a wallet event changing on a lead whose stored row did not
+      // move would otherwise leave the card showing the previous side.
       const signature = JSON.stringify([cards.map(function (card) {
-        return [card.row.chain, card.row.address, card.row.quadrant, card.row.firstSeenAt, card.row.lastSeenAt,
-          card.row.lastSignalAt, card.row.risk, card.row.flow, card.row.exiting, card.row.source,
-          card.row.veto, card.row.firstVeto, card.row.curve,
-          card.first, card.last, card.gate, card.cooling, card.row.signals];
-      }), mode, currentLocale, data && data.generatedAt]);
+        return [card.row && card.row.chain, card.row && card.row.address, card.row && card.row.quadrant,
+          card.row && card.row.firstSeenAt, card.row && card.row.lastSeenAt, card.row && card.row.lastSignalAt,
+          card.row && card.row.risk, card.row && card.row.flow, card.row && card.row.exiting, card.row && card.row.source,
+          card.row && card.row.veto, card.row && card.row.firstVeto, card.row && card.row.curve,
+          card.first, card.last, card.gate, card.cooling, card.row && card.row.signals,
+          card.wallet && card.wallet.id, card.wallet && card.wallet.kind, card.wallet && card.wallet.wallets,
+          card.wallet && card.wallet.amountUsd, card.wallet && card.wallet.at];
+      }), mode, currentLocale, data && data.generatedAt, signalData && signalData.chain, newPools]);
       if (signature === trackFingerprint) return;
       trackFingerprint = signature;
 
+      // The signal channel's own state is reported on this board because this
+      // board is now where its output lands. If the trade feed stops reading,
+      // every wallet line simply stops appearing - and without this line a
+      // silent feed would be indistinguishable from a market with no smart
+      // money in it, which is the same failure the counts below exist to stop.
+      byId('trackState').textContent = t(signalStatusKey(signalData && signalData.chain === chain ? signalData : null));
       const summary = data && data.trackSummary;
       byId('trackMeta').textContent = summary
-        ? t('trackBrief', { n: formatCount(summary.tracked), time: data.generatedAt ? relativeTime(data.generatedAt) : t('noRecord') })
+        // The count is the board's own, not the tracking set's: this board is
+        // both feeds together, and printing only the tracking half would
+        // understate it by the majority.
+        ? t('trackBrief', { n: formatCount(cards.length), time: data.generatedAt ? relativeTime(data.generatedAt) : t('noRecord') })
           + ' · ' + ['POOL_PULLED', 'DISTRIBUTION', 'BREAKOUT', 'WATCH'].map(function (name) {
             return t(TRACK_TAG[name]) + ' ' + formatCount(summary.quadrants ? summary.quadrants[name] : 0);
           }).join(' · ')
@@ -2706,6 +2780,12 @@
           // look like the market had gone quiet rather than like the board had
           // declined to print 1294 rows of nothing.
           + (number(summary.quiet) > 0 ? ' · ' + t('trackQuietCount', { n: formatCount(summary.quiet) }) : '')
+          // And a sixth, for the part of the wallet feed that was given no row of
+          // its own. An arrival is a sighting rather than an event, so it stays
+          // out of the list - but it is still counted, for the same reason as
+          // above: a board that swallows part of a feed cannot be told apart
+          // from a feed that has gone quiet.
+          + (newPools > 0 ? ' · ' + t('boardNewPools', { n: formatCount(newPools) }) : '')
         : '';
 
       const money = function (value) { return hasFiniteValue(value) ? formatMoney(value) : t('unknown'); };
@@ -2727,11 +2807,17 @@
       const points = function (delta) { const moved = Number(delta) * 100; return (moved > 0 ? '+' : '') + moved.toFixed(1) + 'pp'; };
 
       byId('trackRows').innerHTML = cards.map(function (card) {
-        const row = card.row, first = card.first, last = card.last;
-        const contractFatal = Boolean(row.risk) && row.risk.verdict === 'FATAL';
-        const risk = row.quadrant === 'POOL_PULLED' || row.quadrant === 'DISTRIBUTION' || contractFatal;
-        const tag = TRACK_TAG[row.quadrant] || 'trackTagWatch';
-        const tagClass = TRACK_CLASS[row.quadrant] || 'track-tag-watch';
+        const row = card.row, wallet = card.wallet, first = card.first, last = card.last;
+        const contractFatal = Boolean(row && row.risk) && row.risk.verdict === 'FATAL';
+        const risk = Boolean(row) && (row.quadrant === 'POOL_PULLED' || row.quadrant === 'DISTRIBUTION' || contractFatal);
+        // A lead the tracking set never held still needs a label, and the one
+        // thing known about it is which side the wallets are on. So the quadrant
+        // slot carries that side instead of standing empty: same slot, same place
+        // on the card, a different question answered.
+        const tag = row ? (TRACK_TAG[row.quadrant] || 'trackTagWatch')
+          : (wallet.kind === 'EXIT' ? 'signalKindExit' : 'signalKindEntry');
+        const tagClass = row ? (TRACK_CLASS[row.quadrant] || 'track-tag-watch')
+          : (wallet.kind === 'EXIT' ? 'track-tag-pool' : 'track-tag-breakout');
         const axisRow = function (label, firstValue, lastValue, render, format) {
           const ratio = ratioOf(firstValue, lastValue);
           const known = ratio !== null;
@@ -2760,13 +2846,20 @@
             + '<span class="pair mono">' + escapeHtml(value(firstValue) + ' → ' + value(lastValue)) + '</span>'
             + '<span class="delta ' + status + '">' + escapeHtml(known ? points(delta) + (moved ? ' ' + (rising ? '▲' : '▼') : '') : '—') + '</span></div>';
         };
-        const axes = [
-          axisRow(t('trackPrice'), first.price, last.price, price, multiple),
-          axisRow(t('liveCap'), first.marketCap, last.marketCap, money, percent),
-          axisRow(t('liveLp'), first.liquidity, last.liquidity, money, percent),
-          axisRow(t('trackHolders'), first.holders, last.holders, count, percent),
-          shiftRow(t('trackTop10'), first.top10Rate, last.top10Rate)
-        ].join('');
+        // Both kinds of card read the same way - first sighting against now - so
+        // the two sources do not produce two unrelated layouts. A lead the
+        // tracking set holds shows its five axes; a wallet-only lead shows the
+        // two the trade feed actually carries, which beats a column of dashes
+        // implying the readings were lost.
+        const axes = (row
+          ? [axisRow(t('trackPrice'), first.price, last.price, price, multiple),
+            axisRow(t('liveCap'), first.marketCap, last.marketCap, money, percent),
+            axisRow(t('liveLp'), first.liquidity, last.liquidity, money, percent),
+            axisRow(t('trackHolders'), first.holders, last.holders, count, percent),
+            shiftRow(t('trackTop10'), first.top10Rate, last.top10Rate)]
+          : [axisRow(t('liveCap'), wallet.firstMarketCap, wallet.marketCap, money, percent),
+            axisRow(t('liveLp'), wallet.firstLiquidity, wallet.liquidity, money, percent)]
+        ).join('');
         const signalText = function (signal) {
           // A wallet-cluster event is the one signal on a tracking card that is
           // not a threshold being crossed, so it names the wallets instead of a
@@ -2792,60 +2885,103 @@
           const label = signal.axis === 'price' && signal.basis === 'marketCap' ? 'trackSignalCap' : key;
           return label ? t(label, { v: level() }) : signal.axis + ' ' + level();
         };
-        const signals = (row.signals || []).slice(0, 4);
-        const signalBlock = signals.length
+        const signals = row ? (row.signals || []).slice(0, 4) : [];
+        const signalBlock = !row ? '' : signals.length
           ? '<div class="track-signals"><strong>' + escapeHtml(t('trackSignals')) + '</strong>' + signals.map(function (signal) {
             return '<div' + (signal.axis === 'flow' ? ' class="flow-line"' : '') + '><span class="mono">'
               + escapeHtml(formatClock(signal.at)) + '</span> · ' + escapeHtml(signalText(signal)) + '</div>';
           }).join('') + '</div>'
           : '<div class="track-signals"><span class="muted">' + escapeHtml(t('trackNoSignal')) + '</span></div>';
-        const baseline = t('trackFirstSeen') + ' ' + escapeHtml(formatClock(row.firstSeenAt))
-          + ' · ' + escapeHtml(t('trackAnchorPrice', { v: price(first.price) }))
-          + ' · ' + escapeHtml(t('trackAnchorCap', { v: money(first.marketCap) }))
-          // A lead whose market baseline came from the discovery feed has no
-          // price axis, because that feed does not publish one. Saying so is
-          // cheaper than leaving a reader to conclude the reading was lost.
-          + (row.source === 'feed'
-            ? ' · <span class="track-source" title="' + escapeHtml(t('trackFeedAnchor')) + '">' + escapeHtml(t('trackFeedAnchor')) + '</span>'
-            : '');
-        // The third badge is the contract verdict, and it carries its own
-        // evidence. An unread or partial contract says so rather than borrowing
-        // the gate's authority, so "not assessed" can never read as "safe".
-        const contract = function () {
-          const verdict = row.risk && row.risk.verdict;
+        const baseline = row
+          ? t('trackFirstSeen') + ' ' + escapeHtml(formatClock(row.firstSeenAt))
+            + ' · ' + escapeHtml(t('trackAnchorPrice', { v: price(first.price) }))
+            + ' · ' + escapeHtml(t('trackAnchorCap', { v: money(first.marketCap) }))
+            // A lead whose market baseline came from the discovery feed has no
+            // price axis, because that feed does not publish one. Saying so is
+            // cheaper than leaving a reader to conclude the reading was lost.
+            + (row.source === 'feed'
+              ? ' · <span class="track-source" title="' + escapeHtml(t('trackFeedAnchor')) + '">' + escapeHtml(t('trackFeedAnchor')) + '</span>'
+              : '')
+          : t('trackFirstSeen') + ' ' + escapeHtml(formatClock(wallet.firstSeenAt))
+            + ' · ' + escapeHtml(t('trackAnchorCap', { v: money(wallet.firstMarketCap) }));
+        // This is the seam between the two feeds: one line, on one card, saying
+        // which side moved and how much money moved with it. Everything the old
+        // wallet panel led with is here, next to the pool it belongs to.
+        const walletLine = !wallet ? '' : (function () {
+          const strengthKey = wallet.strength === 'VERY_STRONG' ? 'signalStrengthVeryStrong'
+            : wallet.strength === 'STRONG' ? 'signalStrengthStrong'
+              : wallet.strength === 'MEDIUM' ? 'signalStrengthMedium' : null;
+          const activityKey = wallet.activity === 'BOTH' ? 'signalActivityBoth'
+            : wallet.activity === 'KOL' ? 'signalActivityKol' : wallet.activity === 'SMART' ? 'signalActivitySmart' : null;
+          return '<div class="track-money ' + (wallet.kind === 'EXIT' ? 'exit' : 'entry') + '">'
+            + '<strong>' + escapeHtml(t(wallet.kind === 'EXIT' ? 'trackFlowExitTag' : 'trackFlowEntryTag')) + '</strong>'
+            + (number(wallet.wallets) > 0 ? '<span>' + escapeHtml(t('signalWalletCount', { n: formatCount(wallet.wallets) })) + '</span>' : '')
+            + (number(wallet.amountUsd) > 0 ? '<span>' + escapeHtml(t('boardMoneyTotal', { amount: formatMoney(wallet.amountUsd) })) + '</span>' : '')
+            // An average only means something once both halves are known, so a
+            // missing amount shows nothing rather than a division by a guess.
+            + (number(wallet.wallets) > 0 && number(wallet.amountUsd) > 0
+              ? '<span class="muted">' + escapeHtml(t('signalAvgAmount', { amount: formatMoney(number(wallet.amountUsd) / number(wallet.wallets)) })) + '</span>' : '')
+            + (activityKey ? '<span class="muted">' + escapeHtml(t(activityKey)) + '</span>' : '')
+            + (strengthKey ? '<span>' + escapeHtml(t(strengthKey)) + '</span>' : '')
+            // How much of the position left. "Several wallets sold" and "several
+            // wallets closed out entirely" are different sizes of warning, and
+            // the count alone cannot tell them apart.
+            + (wallet.reason === 'CLUSTER_EXIT_FULL' ? '<span>' + escapeHtml(t('signalExitFull')) + '</span>' : '')
+            + (wallet.reason === 'CLUSTER_EXIT_PART' ? '<span>' + escapeHtml(t('signalExitPart')) + '</span>' : '')
+            + '<span class="muted">' + escapeHtml(wallet.at ? relativeTime(wallet.at) : t('noRecord')) + '</span>'
+            + '</div>';
+        })();
+        // The contract verdict, the gate and the exit warning are all statements
+        // about a pool the tracking set has actually seen. A wallet-only lead has
+        // no pool record here, so none of the three is printed: an absent reading
+        // must not be dressed up as a passed one.
+        const contract = (function () {
+          const verdict = row && row.risk && row.risk.verdict;
           if (verdict === 'FATAL') return { key: 'trackRiskFatal', cls: 'track-tag-pool', title: t('trackRiskHintFatal') };
           if (verdict === 'NO_FATAL_FLAGS') return { key: 'trackRiskClean', cls: 'track-tag-breakout', title: t('trackRiskHintClean') };
           if (verdict === 'UNKNOWN') return { key: 'trackRiskUnknown', cls: 'track-tag-watch', title: t('trackRiskHintUnknown') };
-          return { key: 'trackRiskNone', cls: 'track-tag-watch', title: t('trackRiskHintNone') };
-        }();
-        const reasons = row.risk && Array.isArray(row.risk.reasons) ? row.risk.reasons : [];
-        const contractTitle = reasons.length ? contract.title + ' — ' + reasons.join(', ') : contract.title;
+          return null;
+        })();
+        const reasons = row && row.risk && Array.isArray(row.risk.reasons) ? row.risk.reasons : [];
+        const contractTitle = contract ? (reasons.length ? contract.title + ' — ' + reasons.join(', ') : contract.title) : '';
         // The exit warning badge is shown only while the engine still counts the
         // cluster as live. `row.flow` on its own is the last event ever seen on
         // this lead, which may be hours old, and a stale exit badge would be
         // worse than none: it would read as "selling now" for a token nobody is
         // selling. The wallet count is carried because the badge's whole claim
         // is that several wallets moved, not one.
-        const exitBadge = row.exiting === true && row.flow && row.flow.kind === 'EXIT'
+        const exitBadge = row && row.exiting === true && row.flow && row.flow.kind === 'EXIT'
           ? '<span class="live-tag track-flow exit track-gate" title="' + escapeHtml(t('trackFlowHintExit')) + '">'
             + escapeHtml(t('trackFlowExitTag')) + (number(row.flow.wallets) > 0 ? ' ' + escapeHtml(formatCount(row.flow.wallets)) : '')
             + '</span>'
           : '';
+        const gateBadge = !row ? ''
+          : '<span class="live-tag ' + (card.gate ? 'track-tag-gate' : 'track-tag-watch') + ' track-gate" title="' + escapeHtml(t('trackGateHint')) + '">'
+            + escapeHtml(t(card.gate ? 'trackGatePassed' : 'trackGatePending')) + '</span>';
+        const contractBadge = !contract ? ''
+          : '<span class="live-tag ' + contract.cls + ' track-gate" title="' + escapeHtml(contractTitle) + '">' + escapeHtml(t(contract.key)) + '</span>';
         return '<article class="track-card' + (risk ? ' risk' : '') + '">'
-          + '<div class="track-card-head"><strong>' + escapeHtml(row.symbol || '?') + '</strong><span>'
+          + '<div class="track-card-head"><strong>' + escapeHtml((row ? row.symbol : wallet.symbol) || '?') + '</strong><span>'
           + '<span class="live-tag ' + tagClass + '">' + escapeHtml(t(tag)) + '</span> '
           + exitBadge + (exitBadge ? ' ' : '')
-          + '<span class="live-tag ' + (card.gate ? 'track-tag-gate' : 'track-tag-watch') + ' track-gate" title="' + escapeHtml(t('trackGateHint')) + '">' + escapeHtml(t(card.gate ? 'trackGatePassed' : 'trackGatePending')) + '</span> '
-          + '<span class="live-tag ' + contract.cls + ' track-gate" title="' + escapeHtml(contractTitle) + '">' + escapeHtml(t(contract.key)) + '</span></span></div>'
+          + gateBadge + (gateBadge ? ' ' : '')
+          + contractBadge + '</span></div>'
+          // The address is on the card because a lead cannot be acted on without
+          // it, and because two different tokens on one chain routinely share a
+          // symbol - measured on the live board, three of the nine wallet
+          // addresses carried a symbol another address was already using, so the
+          // symbol alone does not identify the row.
+          + '<div class="addr mono">' + escapeHtml(String((row ? row.address : wallet.address) || '')) + '</div>'
           + '<div class="track-baseline">' + baseline + (card.cooling ? ' · <span class="track-cooling">' + escapeHtml(t('trackCoolingTag')) + '</span>' : '') + '</div>'
+          + walletLine
           // The verdict belongs above the axes. The axes say how the lead has
           // behaved; the verdict says whether it should ever have been entered -
           // and a card that put behaviour first would have the reader form an
           // opinion before reaching the reason not to.
-          + vetoLine(row)
+          + vetoLine(row || wallet)
           + '<div class="track-axes">' + axes + '</div>'
           + signalBlock + '</article>';
-      }).join('') || '<div class="empty">' + escapeHtml(t('trackEmpty')) + '</div>';
+      }).join('') || '<div class="empty">' + escapeHtml(t('boardEmpty')) + '</div>';
     }
 
     // The signal stream answers "who is moving together", so a card leads with
@@ -2923,71 +3059,11 @@
         + parts.join('') + drift + checked + '</div>';
     }
 
-    function renderSignals() {
-      const chain = viewChain || activeChain(lastData);
-      const data = signalData && signalData.chain === chain ? signalData : null;
-      byId('signalState').textContent = t(signalStatusKey(data));
-      const listed = data && Array.isArray(data.signals) ? data.signals : [];
-      byId('signalMeta').textContent = t('signalBrief', { n: listed.length,
-        time: data && data.lastSuccessAt ? relativeTime(data.lastSuccessAt) : t('noRecord') });
-      const fingerprint = JSON.stringify([chain, currentLocale, listed]);
-      if (fingerprint === signalFingerprint) return;
-      signalFingerprint = fingerprint;
-      // Strength leads, recency breaks ties. The stream arrives newest-first,
-      // but the rungs are not equally worth reading, and a flood of two-wallet
-      // signals must not bury the documented three-wallet ones underneath it.
-      const rank = { VERY_STRONG: 3, STRONG: 2, MEDIUM: 1 };
-      const ordered = listed.slice().sort(function (a, b) {
-        return (rank[b.strength] || 0) - (rank[a.strength] || 0) || number(b.at) - number(a.at);
-      });
-      byId('signalRows').innerHTML = ordered.slice(0, 24).map(function (signal) {
-        const kind = signal.kind === 'ENTRY' ? 'entry' : signal.kind === 'EXIT' ? 'exit' : 'new';
-        const kindKey = kind === 'entry' ? 'signalKindEntry' : kind === 'exit' ? 'signalKindExit' : 'signalKindNew';
-        const activityKey = signal.activity === 'BOTH' ? 'signalActivityBoth'
-          : signal.activity === 'KOL' ? 'signalActivityKol' : 'signalActivitySmart';
-        const strengthKey = signal.strength === 'VERY_STRONG' ? 'signalStrengthVeryStrong'
-          : signal.strength === 'STRONG' ? 'signalStrengthStrong' : signal.strength === 'MEDIUM' ? 'signalStrengthMedium' : null;
-        const wallets = number(signal.wallets), amount = number(signal.amountUsd);
-        const firstCap = number(signal.firstMarketCap), cap = number(signal.marketCap), liquidity = number(signal.liquidity);
-        const curve = signal.curve;
-        const lines = [];
-        if (wallets > 0) lines.push('<div class="signal-reason"><b>' + escapeHtml(t('signalWalletCount', { n: wallets })) + '</b></div>');
-        if (wallets > 0 && amount > 0) lines.push('<div class="signal-anchor">'
-          + escapeHtml(t('signalAvgAmount', { amount: formatMoney(amount / wallets) })) + '</div>');
-        if (firstCap > 0 || cap > 0) lines.push('<div class="signal-anchor">'
-          + escapeHtml(t('signalAnchor', { first: formatMoney(firstCap), now: formatMoney(cap) })) + '</div>');
-        if (liquidity > 0) lines.push('<div class="signal-anchor">' + escapeHtml(t('liveLp') + ' ' + formatMoney(liquidity)) + '</div>');
-        // The curve is shown as travel. A position alone says nothing - every pool
-        // starts at zero - and the rate is the part no single snapshot can carry.
-        if (curve && hasFiniteValue(curve.to)) {
-          const rate = hasFiniteValue(curve.perMinute)
-            ? (Number(curve.perMinute) >= 0 ? '+' : '') + Math.round(Number(curve.perMinute) * 100) + '%' : '—';
-          const stageKey = curve.stage === 'LATE' ? 'vetoCurveStageLate'
-            : curve.stage === 'MID' ? 'vetoCurveStageMid' : 'vetoCurveStageEarly';
-          lines.push('<div class="signal-anchor">' + escapeHtml(t('vetoCurve', {
-            from: Math.round(number(curve.from) * 100) + '%', to: Math.round(number(curve.to) * 100) + '%', rate: rate
-          })) + ' · ' + escapeHtml(t(stageKey)) + '</div>');
-        }
-        const tags = ['<span class="live-tag">' + escapeHtml(t(kindKey)) + '</span>'];
-        if (kind !== 'new') tags.push('<span class="live-tag">' + escapeHtml(t(activityKey)) + '</span>');
-        if (strengthKey) tags.push('<span class="live-tag">' + escapeHtml(t(strengthKey)) + '</span>');
-        // The intersection of "we saw the pool" and "proven wallets are buying"
-        // is the thing this panel exists to surface, so it is marked explicitly
-        // rather than left implicit in whether a number happens to be present.
-        if (kind !== 'new' && (firstCap > 0 || cap > 0)) tags.push('<span class="live-tag">' + escapeHtml(t('signalCrossed')) + '</span>');
-        if (signal.reason === 'CLUSTER_EXIT_FULL') tags.push('<span class="live-tag">' + escapeHtml(t('signalExitFull')) + '</span>');
-        if (signal.reason === 'CLUSTER_EXIT_PART') tags.push('<span class="live-tag">' + escapeHtml(t('signalExitPart')) + '</span>');
-        return '<article class="signal-card signal-' + kind + '">'
-          + '<div class="signal-card-head"><strong>' + escapeHtml(signal.symbol || '?') + '</strong><span class="muted">'
-          + escapeHtml(signal.at ? relativeTime(signal.at) : t('noRecord')) + '</span></div>'
-          + '<div class="muted">' + escapeHtml(signal.name || '') + '</div>'
-          + '<div class="addr mono">' + escapeHtml(String(signal.address).slice(0, 8) + '…' + String(signal.address).slice(-6)) + '</div>'
-          + lines.join('') + vetoLine(signal) + '<div class="signal-tags">' + tags.join('') + '</div></article>';
-      }).join('') || '<div class="empty">' + escapeHtml(t('signalEmpty')) + '</div>';
-    }
-
+    // The wallet feed is read on its own clock, because it is a different
+    // measurement taken from a different source, but it is drawn on the board
+    // rather than in a panel of its own: a lead can only be judged whole in one
+    // place. The fetch stays separate; only the drawing is shared.
     async function refreshSignals() {
-      renderSignals();
       if (signalBusy || document.hidden || !lastData) return;
       const chain = viewChain || activeChain(lastData);
       signalBusy = true;
@@ -3004,7 +3080,7 @@
       } catch {
         // A transient read failure keeps the previous snapshot on screen rather
         // than blanking the panel and implying the signals went away.
-      } finally { signalBusy = false; renderSignals(); }
+      } finally { signalBusy = false; renderTrack(); }
     }
 
     async function refreshLive() {
@@ -3069,7 +3145,6 @@
       renderTelemetry();
       renderLive();
       renderTrack();
-      renderSignals();
       if (shouldRenderCandidates) renderCandidates();
       else renderVoiceSpotlight();
     }
