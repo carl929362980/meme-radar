@@ -277,7 +277,7 @@ const sharesFeed = (record, observation) => sourceOf(record?.source) === sourceO
 //                 invented out of a trade would make every card's anchor a guess.
 export function observeTracks(records, observations, now = Date.now(),
   { retentionMs = 7 * 24 * 60 * 60_000, feedRetentionMs = FEED_LEAD_RETENTION_MS,
-    staleMs = STALE_LEAD_MS, signalLimit = 40, pools = [], flows = [] } = {}) {
+    staleMs = STALE_LEAD_MS, signalLimit = 40, pools = [], flows = [], stats = null } = {}) {
   const quiet = Number(staleMs);
   const staleLimit = Number.isFinite(quiet) && quiet > 0 ? quiet : STALE_LEAD_MS;
   const byAddress = new Map((Array.isArray(records) ? records : []).map(row => [trackKey(row.address), { ...row }]));
@@ -369,18 +369,39 @@ export function observeTracks(records, observations, now = Date.now(),
   // to outlive a market one, even if a caller asks for a longer window than the
   // board's own: it would be the same hoard under a different name.
   const feedKeep = Math.min(Number(feedRetentionMs) || retentionMs, retentionMs);
-  return [...byAddress.values()]
+  const alive = [...byAddress.values()]
     .filter(row => now - Number(row.firstSeenAt || 0) <= (sourceOf(row.source) === 'feed' ? feedKeep : retentionMs))
     // ...and neither ceiling is what actually retires a market lead. One the
     // feeds have stopped listing is over in two hours, whether or not anyone was
     // watching at the moment it went quiet. A feed lead never reaches this
     // window - its own hour is the shorter clock, as it should be.
     .filter(row => silentFor(row, now) <= staleLimit);
+  // A lead the pre-flight checklist vetoed is not tracked at all. It is not a
+  // lead this product would have anyone act on, so carrying it is not a smaller
+  // reading of it, it is a wrong one - and the board is a watch list, not a
+  // list of what to avoid.
+  //
+  // Measured on the live board when this was written: 22 of 84 rows were vetoed,
+  // and not marginally - CREATOR_SPRAY dominated, one creator's launch count
+  // above five hundred tokens on BSC, the same name repeated four times under
+  // four addresses. Those rows are not a signal carrying a caveat, they are the
+  // spray itself. The board ranks a drained pool first, so before this they were
+  // also the first thing on screen.
+  //
+  // The verdict is not recomputed here (see the fold above); it is carried from
+  // where the risk facts live. Two consequences worth stating. The drop happens
+  // on every cycle, so nothing accumulates and no stored record needs migrating.
+  // And it is *reported* through `stats`, because a board that silently shrinks
+  // is indistinguishable from a quiet market - which is the exact failure the
+  // neighbouring defaults were already caught having.
+  const kept = alive.filter(row => row.veto?.state !== 'BLOCK');
+  if (stats && typeof stats === 'object') stats.vetoed = alive.length - kept.length;
+  return kept;
 }
 
 const QUADRANTS = Object.freeze(['POOL_PULLED', 'DISTRIBUTION', 'BREAKOUT', 'WATCH']);
 
-export function summarizeTracking(records, now = Date.now(), { coolingMs = 30 * 60_000 } = {}) {
+export function summarizeTracking(records, now = Date.now(), { coolingMs = 30 * 60_000, vetoed = 0 } = {}) {
   const rows = Array.isArray(records) ? records : [];
   const quadrants = Object.fromEntries(QUADRANTS.map(name => [name, 0]));
   let cooling = 0;
@@ -398,13 +419,20 @@ export function summarizeTracking(records, now = Date.now(), { coolingMs = 30 * 
     // Counted separately from the quadrant: a contract verdict says nothing
     // about price behaviour, and the two must not be blended into one number.
     if (row.risk?.verdict === 'FATAL') atRisk++;
-    // And a third time, for a third question. The pre-flight verdict asks whether
-    // a lead *should* be entered; the quadrant asks how it is behaving. A lead
-    // can be vetoed at discovery and still be the best mover on the board, and
-    // collapsing those into one number would lose both readings.
+    // And a third time, for a third question: the pre-flight verdict asks whether
+    // a lead *should* be entered, which is neither how it is behaving nor how
+    // risky its contract is, and it must not be blended into either. What the
+    // number now reports is how many leads the checklist refused - the ones the
+    // board therefore does not carry (see observeTracks). That cannot be read off
+    // `rows`, because a vetoed lead is dropped before it ever gets here, so the
+    // tally is handed in by the filter that dropped it. The scan of `rows` is
+    // kept underneath it because the two sets are disjoint by construction: a
+    // caller holding rows that were never filtered still gets its vetoes counted
+    // rather than a silent zero.
     if (row.veto?.state === 'BLOCK') blocked++;
   }
   const signals = rows.flatMap(row => (row.signals || []).map(signal => ({ ...signal, address: row.address, symbol: row.symbol, chain: row.chain })))
     .sort((a, b) => b.at - a.at).slice(0, 20);
-  return { tracked: rows.length, cooling, active: rows.length - cooling, atRisk, exiting, blocked, quadrants, recentSignals: signals };
+  return { tracked: rows.length, cooling, active: rows.length - cooling, atRisk, exiting,
+    blocked: blocked + Math.max(0, Number(vetoed) || 0), quadrants, recentSignals: signals };
 }

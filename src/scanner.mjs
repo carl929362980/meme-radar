@@ -749,6 +749,11 @@ export class Scanner {
       // wallet clusters are unconditional: they are matched by address to any
       // record, and they are the board's exit warning.
       const feed = this.feedObservations(chain);
+      // Filled by the fold with the leads the pre-flight verdict turned away, so
+      // the summary can report them. The board drops them either way; this only
+      // keeps the number visible instead of letting a smaller board read as a
+      // quieter market.
+      const trackStats = {};
       let tracking = observeTracks(
         prior.track,
         auditable.map(({ row }) => {
@@ -772,7 +777,8 @@ export class Scanner {
           staleMs: settings.trackStaleMs,
           signalLimit: settings.trackSignalLimit,
           pools: feed.pools,
-          flows: feed.flows
+          flows: feed.flows,
+          stats: trackStats
         }
       );
       let events = prior.events || [];
@@ -1044,7 +1050,7 @@ export class Scanner {
         outcomes,
         outcomeSummary: summarizeOutcomes(outcomes),
         track: tracking,
-        trackSummary: summarizeTracking(tracking, now, { coolingMs: settings.trackCoolingMs }),
+        trackSummary: summarizeTracking(tracking, now, { coolingMs: settings.trackCoolingMs, vetoed: trackStats.vetoed }),
         sourceHealth: { discovery: discoveryHealth, lastAudit: lastAuditHealth, lastSecondary: lastSecondaryHealth,
           // Reported so a throttled enrichment is visible instead of silently
           // producing cards with fewer axes. Optional: absent when disabled.

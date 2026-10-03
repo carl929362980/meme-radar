@@ -372,17 +372,21 @@ test('the exit count is reported next to the quadrants and expires with the warn
 // properties matter. It survives the fold, and an observation that arrives
 // without one - which is every observation that has no verdict to give - does not
 // clear it, because a cleared verdict reads as a pass.
+//
+// The fixture warns rather than vetoes: a veto is no longer tracked at all (see
+// the test below), so a caution is the strongest verdict that can be observed
+// surviving the fold.
 test('a lead keeps its verdict, and a later sighting cannot clear it', () => {
   const pool = { chain: 'bsc', address: EVM, symbol: 'FISH', source: 'feed', firstSeenAt: AT,
     baseline: { marketCap: 20_000, liquidity: 10_000, holders: 100, at: AT },
     marketCap: 20_000, liquidity: 10_000, holders: 100, at: AT,
-    veto: { state: 'BLOCK', reasons: [{ code: 'CREATOR_SPRAY', level: 'BLOCK', value: 288 }],
+    veto: { state: 'CAUTION', reasons: [{ code: 'BUNDLER_HEAVY', level: 'CAUTION', value: 0.44 }],
       unassessed: ['HONEYPOT'], assessed: 16, coverage: 0.94 },
     firstVeto: { state: 'CLEAR', reasons: [], unassessed: ['HONEYPOT'], assessed: 16 },
     curve: { from: 0.04, to: 0.33, delta: 0.29, minutes: 4, perMinute: 0.0725, stage: 'MID' } };
 
   const fromFeed = observeTracks([], [], AT, { pools: [pool] });
-  assert.equal(fromFeed[0].veto.state, 'BLOCK');
+  assert.equal(fromFeed[0].veto.state, 'CAUTION');
   assert.equal(fromFeed[0].firstVeto.state, 'CLEAR', 'the answer given at discovery is kept apart');
   assert.equal(fromFeed[0].curve.stage, 'MID');
 
@@ -390,7 +394,7 @@ test('a lead keeps its verdict, and a later sighting cannot clear it', () => {
   // the provider answered the market question, not the risk one.
   const later = observeTracks(fromFeed, [], AT + 60_000, { pools: [{ chain: 'bsc', address: EVM, symbol: 'FISH',
     source: 'feed', firstSeenAt: AT, marketCap: 30_000, liquidity: 12_000, holders: 150, at: AT + 60_000 }] });
-  assert.equal(later[0].veto.state, 'BLOCK', 'a sighting without a verdict must not read as a pass');
+  assert.equal(later[0].veto.state, 'CAUTION', 'a sighting without a verdict must not read as a pass');
   assert.equal(later[0].firstVeto.state, 'CLEAR');
   assert.equal(later[0].curve.stage, 'MID', 'and the travel is not lost either');
 
@@ -401,21 +405,60 @@ test('a lead keeps its verdict, and a later sighting cannot clear it', () => {
   assert.equal(market[0].curve, null);
 });
 
-test('a vetoed lead is counted on its own, not folded into any other tally', () => {
+// A veto is not a caveat on a lead, it is the checklist refusing it - so the lead
+// is not tracked at all. It never reaches the board, and one already on the board
+// leaves the moment the verdict arrives. Measured before this rule: 22 of 84 live
+// rows were vetoed, almost all of them CREATOR_SPRAY, and the board ranks a
+// drained pool first, so the spray was the first thing on screen.
+test('a vetoed lead is not tracked, and one already on the board is dropped', () => {
+  const pool = (over = {}) => ({ chain: 'bsc', address: EVM, symbol: 'SPRAY', source: 'feed',
+    firstSeenAt: AT, at: AT, marketCap: 20_000, liquidity: 10_000, holders: 100,
+    veto: { state: 'BLOCK', reasons: [{ code: 'CREATOR_SPRAY', level: 'BLOCK', value: 288 }], assessed: 16 },
+    ...over });
+
+  const fresh = {};
+  assert.deepEqual(observeTracks([], [], AT, { pools: [pool()], stats: fresh }), [],
+    'a vetoed lead never reaches the board');
+  assert.equal(fresh.vetoed, 1, 'and the refusal is reported rather than silent');
+
+  // Clean when found, vetoed later: the verdict is a current fact, so the card
+  // goes with it rather than staying as a warning about something already known.
+  const clean = pool({ veto: { state: 'CLEAR', reasons: [], assessed: 16 } });
+  const before = observeTracks([], [], AT, { pools: [clean] });
+  assert.equal(before.length, 1, 'a cleared lead is tracked as normal');
+  const after = {};
+  assert.deepEqual(observeTracks(before, [], AT + 60_000, { pools: [pool({ at: AT + 60_000 })], stats: after }), [],
+    'the veto removes a lead that was already on the board');
+  assert.equal(after.vetoed, 1);
+
+  // The rule is about a veto, not about a warning: a caution is a lead the reader
+  // may still want to see, and dropping it would empty the board of the very
+  // leads the checklist asked to look at twice.
+  const cautioned = pool({ veto: { state: 'CAUTION', reasons: [{ code: 'DEV_HOLDS', level: 'CAUTION', value: 0.2 }], assessed: 16 } });
+  assert.equal(observeTracks([], [], AT, { pools: [cautioned] }).length, 1,
+    'only a veto refuses a lead; a caution still only warns');
+});
+
+test('the refused-lead count is reported even though the board no longer carries them', () => {
   const at = AT;
   const base = { chain: 'bsc', symbol: 'FISH', firstSeenAt: at, lastSeenAt: at,
     snapshot: { marketCap: 20_000, liquidity: 10_000, holders: 100, top10Rate: null, at },
     latest: { marketCap: 20_000, liquidity: 10_000, holders: 100, top10Rate: null, at },
     risk: null, reached: {}, signals: [] };
+  // What the board actually holds now: a veto never gets this far.
   const rows = [
-    { ...base, address: '0x' + '1'.repeat(40), veto: { state: 'BLOCK' } },
     { ...base, address: '0x' + '2'.repeat(40), veto: { state: 'CAUTION' } },
     { ...base, address: '0x' + '3'.repeat(40), veto: { state: 'CLEAR' } },
-    { ...base, address: '0x' + '4'.repeat(40), veto: null },
-    { ...base, address: '0x' + '5'.repeat(40), veto: { state: 'BLOCK' } }
+    { ...base, address: '0x' + '4'.repeat(40), veto: null }
   ];
-  const summary = summarizeTracking(rows, at);
-  assert.equal(summary.blocked, 2, 'only a veto counts, not a caution and not an absence');
-  assert.equal(summary.tracked, 5);
+  const summary = summarizeTracking(rows, at, { vetoed: 9 });
+  assert.equal(summary.blocked, 9, 'the tally is handed in by the filter that dropped them');
+  assert.equal(summary.tracked, 3, 'and it does not inflate the board it describes');
   assert.equal(summary.exiting, 0);
+
+  // The two sources are disjoint by construction, so a caller holding rows that
+  // were never filtered still gets its vetoes counted rather than a silent zero.
+  const raw = summarizeTracking([...rows, { ...base, address: '0x' + '5'.repeat(40), veto: { state: 'BLOCK' } }], at);
+  assert.equal(raw.blocked, 1, 'a veto left among the rows is counted, and not twice');
+  assert.equal(raw.tracked, 4);
 });

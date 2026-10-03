@@ -1124,7 +1124,7 @@
       trackFlowHintExit: ['多个聪明钱/KOL钱包在同一窗口卖出该标的，这是一条退出类预警，先于价格变化出现。','多個聰明錢/KOL錢包在同一視窗賣出該標的，這是一條退出類預警，先於價格變化出現。','Several smart-money or KOL wallets sold this lead inside one window. This is an exit warning and it leads the price.','複数のスマートマネー／KOLウォレットが同一窓で売却しました。これは価格変化に先行する出口警戒です。','여러 스마트머니/KOL 지갑이 같은 구간에서 매도했습니다. 가격 변화에 앞서는 이탈 경보입니다.','باعت عدة محافظ أموال ذكية أو KOL هذا الهدف في نافذة واحدة. هذا تنبيه خروج يسبق تغيّر السعر.'],
       trackFlowHintEntry: ['多个聪明钱/KOL钱包在同一窗口买入该标的。','多個聰明錢/KOL錢包在同一視窗買入該標的。','Several smart-money or KOL wallets bought this lead inside one window.','複数のスマートマネー／KOLウォレットが同一窓で購入しました。','여러 스마트머니/KOL 지갑이 같은 구간에서 매수했습니다.','اشترت عدة محافظ أموال ذكية أو KOL هذا الهدف في نافذة واحدة.'],
       trackExitCount: ['{n} 个在派发','{n} 個在派發','{n} distributing','{n}件が売却中','{n}개 분산 매도 중','{n} توزّع'],
-      trackBlockedCount: ['{n} 个未过体检','{n} 個未過體檢','{n} failed the checklist','{n}件が審査落ち','{n}개 심사 탈락','{n} رسبت في الفحص'],
+      trackBlockedCount: ['已剔除 {n} 个否决','已剔除 {n} 個否決','{n} vetoed, excluded','否決 {n} 件を除外','거부 {n}개 제외','استُبعد {n} مرفوضًا'],
       trackFeedAnchor: ['发现流锚点','發現流錨點','Discovery-feed anchor','発見フィードの基準','발견 흐름 앵커','مرساة مصدر الاكتشاف'],
       trackLiveTag: ['在榜','在榜','On board','掲載中','목록에 있음','مدرج'],
       liveLp: ['流动性','流動性','Liquidity','流動性','유동성','السيولة'],
@@ -2687,7 +2687,9 @@
           + (number(summary.exiting) > 0 ? ' · ' + t('trackExitCount', { n: formatCount(summary.exiting) }) : '')
           // And a fourth, for the fourth question. A vetoed lead is not a bad
           // mover and not a drain; it is one the pre-flight checklist would not
-          // have let through, which is a different thing for a reader to know.
+          // have let through, and this board does not carry it at all. The count
+          // is therefore of leads that were *turned away*, reported so that a
+          // smaller board is never mistaken for a quieter market.
           + (number(summary.blocked) > 0 ? ' · ' + t('trackBlockedCount', { n: formatCount(summary.blocked) }) : '')
         : '';
 
