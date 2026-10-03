@@ -153,6 +153,33 @@ test('the signal log is bounded and keeps the newest signal first', () => {
   assert.equal(records[0].signals[0].id, 'price:8', 'the newest signal is kept first');
 });
 
+test('a feed lead ages on the feed\'s clock while a market lead keeps the board\'s', () => {
+  const feedLead = { chain: 'bsc', address: EVM, symbol: 'FISH', source: 'feed',
+    firstSeenAt: AT, marketCap: 30_000, liquidity: 12_000, holders: 150, at: AT };
+  const marketLead = lead({ address: '0x' + '3'.repeat(40) });
+  let records = observeTracks([], [marketLead], AT);
+  records = observeTracks(records, [], AT, { pools: [feedLead] });
+  assert.equal(records.length, 2);
+
+  // The feed only ever knows a pool while it is inside its own half-hour window,
+  // so four hours later this is not a lead the board is still watching.
+  const source = { retentionMs: 7 * 24 * 60 * 60_000, feedRetentionMs: 60 * 60_000 };
+  records = observeTracks(records, [lead({ marketCap: 21_000 })], AT + 4 * 60 * 60_000, source);
+  assert.deepEqual(records.map(row => row.source), ['market'],
+    'the feed lead is gone; the market lead is still on the board');
+});
+
+test('a feed lead can never be kept longer than a market lead, whatever the caller asks', () => {
+  const seen = { chain: 'bsc', address: EVM, symbol: 'FISH', source: 'feed',
+    firstSeenAt: AT, marketCap: 30_000, liquidity: 12_000, holders: 150, at: AT };
+  const records = observeTracks([], [], AT, { pools: [seen] });
+  // A caller asking for a feed window wider than the board's own would be
+  // hoarding under another name, so the shorter of the two wins.
+  const kept = observeTracks(records, [], AT + 90 * 60_000,
+    { retentionMs: 60 * 60_000, feedRetentionMs: 7 * 24 * 60 * 60_000 });
+  assert.equal(kept.length, 0);
+});
+
 test('records outside the retention window are dropped and the summary agrees', () => {
   const other = '0x' + '2'.repeat(40);
   const options = { retentionMs: 60_000 };
@@ -282,4 +309,56 @@ test('the exit count is reported next to the quadrants and expires with the warn
 
   assert.equal(summarizeTracking(records, AT + EXIT_ALERT_MS + 1).exiting, 0,
     'the count expires with the warning rather than staying lit forever');
+});
+
+// The verdict is formed where the risk facts live and only carried here. Two
+// properties matter. It survives the fold, and an observation that arrives
+// without one - which is every observation that has no verdict to give - does not
+// clear it, because a cleared verdict reads as a pass.
+test('a lead keeps its verdict, and a later sighting cannot clear it', () => {
+  const pool = { chain: 'bsc', address: EVM, symbol: 'FISH', source: 'feed', firstSeenAt: AT,
+    baseline: { marketCap: 20_000, liquidity: 10_000, holders: 100, at: AT },
+    marketCap: 20_000, liquidity: 10_000, holders: 100, at: AT,
+    veto: { state: 'BLOCK', reasons: [{ code: 'CREATOR_SPRAY', level: 'BLOCK', value: 288 }],
+      unassessed: ['HONEYPOT'], assessed: 16, coverage: 0.94 },
+    firstVeto: { state: 'CLEAR', reasons: [], unassessed: ['HONEYPOT'], assessed: 16 },
+    curve: { from: 0.04, to: 0.33, delta: 0.29, minutes: 4, perMinute: 0.0725, stage: 'MID' } };
+
+  const fromFeed = observeTracks([], [], AT, { pools: [pool] });
+  assert.equal(fromFeed[0].veto.state, 'BLOCK');
+  assert.equal(fromFeed[0].firstVeto.state, 'CLEAR', 'the answer given at discovery is kept apart');
+  assert.equal(fromFeed[0].curve.stage, 'MID');
+
+  // The same feed, one cycle later, with a market reading and no verdict on it:
+  // the provider answered the market question, not the risk one.
+  const later = observeTracks(fromFeed, [], AT + 60_000, { pools: [{ chain: 'bsc', address: EVM, symbol: 'FISH',
+    source: 'feed', firstSeenAt: AT, marketCap: 30_000, liquidity: 12_000, holders: 150, at: AT + 60_000 }] });
+  assert.equal(later[0].veto.state, 'BLOCK', 'a sighting without a verdict must not read as a pass');
+  assert.equal(later[0].firstVeto.state, 'CLEAR');
+  assert.equal(later[0].curve.stage, 'MID', 'and the travel is not lost either');
+
+  // Cleaned up on the way out: a lead that never had a verdict reports none,
+  // rather than an empty object the page would have to guess at.
+  const market = observeTracks([], [lead()], AT);
+  assert.equal(market[0].veto, null);
+  assert.equal(market[0].curve, null);
+});
+
+test('a vetoed lead is counted on its own, not folded into any other tally', () => {
+  const at = AT;
+  const base = { chain: 'bsc', symbol: 'FISH', firstSeenAt: at, lastSeenAt: at,
+    snapshot: { marketCap: 20_000, liquidity: 10_000, holders: 100, top10Rate: null, at },
+    latest: { marketCap: 20_000, liquidity: 10_000, holders: 100, top10Rate: null, at },
+    risk: null, reached: {}, signals: [] };
+  const rows = [
+    { ...base, address: '0x' + '1'.repeat(40), veto: { state: 'BLOCK' } },
+    { ...base, address: '0x' + '2'.repeat(40), veto: { state: 'CAUTION' } },
+    { ...base, address: '0x' + '3'.repeat(40), veto: { state: 'CLEAR' } },
+    { ...base, address: '0x' + '4'.repeat(40), veto: null },
+    { ...base, address: '0x' + '5'.repeat(40), veto: { state: 'BLOCK' } }
+  ];
+  const summary = summarizeTracking(rows, at);
+  assert.equal(summary.blocked, 2, 'only a veto counts, not a caution and not an absence');
+  assert.equal(summary.tracked, 5);
+  assert.equal(summary.exiting, 0);
 });

@@ -8,6 +8,7 @@ import { CHART_RISK_VERSION, applyRiskExclusion } from './chart-risk.mjs';
 import { AveError } from './ave-settings.mjs';
 import { activeLiveLeads } from './live-leads.mjs';
 import { classifyTrack, EXIT_ALERT_MS, FLOW_KINDS, FLOW_ACTIVITIES, FLOW_STRENGTHS } from './tracking.mjs';
+import { VETO_STATES, VETO_CODES, VETO_LEVELS } from './veto.mjs';
 
 const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const CHAIN_IDS = new Set(['sol', 'bsc']);
@@ -264,6 +265,61 @@ function publicLiveSnapshot(source = {}, chain) {
 // The signal projection is a whitelist rather than a passthrough: every field is
 // named here, so a later engine change cannot leak an internal value - or a
 // provider identity - into the page merely by adding a key to its snapshot.
+// A verdict, narrowed for the page. Lives at module scope because two panels
+// show one - the signal stream and the tracking board - and two copies of a
+// whitelist is how one of them silently starts dropping reasons.
+//
+// A reason's payload is whatever proved the point: a rate, a count, a label, or
+// for the one-sided book a shape. Each is narrowed on its own terms, so a
+// provider field can never ride out through a verdict.
+const VETO_STATES_SET = new Set(VETO_STATES);
+const VETO_CODES_SET = new Set(VETO_CODES);
+const VETO_LEVELS_SET = new Set(VETO_LEVELS);
+const VETO_STAGES_SET = new Set(['EARLY', 'MID', 'LATE']);
+
+function publicVetoValue(value) {
+  if (typeof value === 'number') return finiteOrNull(value);
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') return text(value, 40) || null;
+  if (value && typeof value === 'object') {
+    return {
+      side: value.side === 'sell' ? 'sell' : value.side === 'buy' ? 'buy' : null,
+      share: finiteOrNull(value.share), total: finiteOrNull(value.total)
+    };
+  }
+  return null;
+}
+
+function publicVerdict(value) {
+  if (!value || typeof value !== 'object') return null;
+  return {
+    state: VETO_STATES_SET.has(value.state) ? value.state : 'UNKNOWN',
+    reasons: (Array.isArray(value.reasons) ? value.reasons : []).slice(0, 20)
+      .filter(reason => reason && VETO_CODES_SET.has(reason.code) && VETO_LEVELS_SET.has(reason.level))
+      .map(reason => ({ code: reason.code, level: reason.level, value: publicVetoValue(reason.value) })),
+    // What was not looked at is part of the answer, so it survives projection.
+    unassessed: (Array.isArray(value.unassessed) ? value.unassessed : []).slice(0, 10)
+      .filter(code => VETO_CODES_SET.has(code)),
+    // The other direction: what the checklist found in this lead's favour. Carried
+    // through the same whitelist, because it is drawn from the same rule table.
+    positives: (Array.isArray(value.positives) ? value.positives : []).slice(0, 10)
+      .filter(entry => entry && VETO_CODES_SET.has(entry.code))
+      .map(entry => ({ code: entry.code, value: publicVetoValue(entry.value) })),
+    assessed: finite(value.assessed),
+    coverage: finiteOrNull(value.coverage)
+  };
+}
+
+// Travel, not position: the same numbers the engine derived, re-validated.
+function publicCurve(value) {
+  if (!value || typeof value !== 'object') return null;
+  return {
+    from: finiteOrNull(value.from), to: finiteOrNull(value.to), delta: finiteOrNull(value.delta),
+    minutes: finiteOrNull(value.minutes), perMinute: finiteOrNull(value.perMinute),
+    stage: VETO_STAGES_SET.has(value.stage) ? value.stage : null
+  };
+}
+
 function publicSignalSnapshot(source = {}, chain) {
   const addressValid = address => typeof address === 'string'
     && (chain === 'sol' ? /^[1-9A-HJ-NP-Za-km-z]{32,44}$/ : /^0x[0-9a-f]{40}$/i).test(address);
@@ -286,12 +342,14 @@ function publicSignalSnapshot(source = {}, chain) {
       marketCap: finiteOrNull(signal.marketCap), liquidity: finiteOrNull(signal.liquidity),
       holders: finiteOrNull(signal.holders), progress: finiteOrNull(signal.progress),
       firstSeenAt: finiteOrNull(signal.firstSeenAt), firstMarketCap: finiteOrNull(signal.firstMarketCap),
-      firstLiquidity: finiteOrNull(signal.firstLiquidity), createdAt: finiteOrNull(signal.createdAt)
+      firstLiquidity: finiteOrNull(signal.firstLiquidity), createdAt: finiteOrNull(signal.createdAt),
+      veto: publicVerdict(signal.veto), firstVeto: publicVerdict(signal.firstVeto), curve: publicCurve(signal.curve)
     }));
   const pools = (Array.isArray(source.pools) ? source.pools : []).slice(0, 100)
     .filter(pool => pool && addressValid(pool.address))
     .map(pool => ({ address: pool.address, symbol: publicMessage(pool.symbol, '?', 30), name: publicMessage(pool.name, '', 80),
-      firstSeenAt: finite(pool.firstSeenAt), first: reading(pool.first), latest: reading(pool.latest) }));
+      firstSeenAt: finite(pool.firstSeenAt), first: reading(pool.first), latest: reading(pool.latest),
+      veto: publicVerdict(pool.veto), firstVeto: publicVerdict(pool.firstVeto), curve: publicCurve(pool.curve) }));
   return {
     chain,
     status: statuses.has(source.status) ? source.status : 'WAITING',
@@ -526,10 +584,33 @@ function publicTrack(row = {}) {
     // instead of being silenced by the stronger-looking verdict.
     flow: publicTrackFlow(row.flow),
     exiting: Number(row.exitedAt) > 0 && Date.now() - Number(row.exitedAt) <= EXIT_ALERT_MS,
+    // The pre-flight verdict, shown beside the market read rather than folded
+    // into it: whether a lead should be entered and how it is behaving are two
+    // different questions, and a card that merged them could only answer one.
+    veto: publicVerdict(row.veto),
+    firstVeto: publicVerdict(row.firstVeto),
+    curve: publicCurve(row.curve),
     snapshot: publicTrackSnapshot(row.snapshot),
     latest: publicTrackSnapshot(row.latest),
     signals: Array.isArray(row.signals) ? row.signals.slice(0, 20).map(publicTrackSignal) : []
   };
+}
+
+// The board's payload is capped, so the cap has to be spent on the freshest
+// leads rather than on whatever order the stored array happens to be in. Records
+// are appended to the tracking set as they are first seen and are never
+// reordered, so a plain head-slice keeps the *oldest* leads and silently hides
+// every new one - which is the single thing this board exists to show. The page
+// sorts the rows it is given by its own mode; that sort can only work on rows
+// that were sent at all.
+const TRACK_ROWS = 200;
+
+function publicTrackList(source) {
+  if (!Array.isArray(source)) return [];
+  return source.slice()
+    .sort((a, b) => finite(b?.lastSeenAt) - finite(a?.lastSeenAt))
+    .slice(0, TRACK_ROWS)
+    .map(publicTrack);
 }
 
 function publicTrackSummary(source = {}) {
@@ -543,6 +624,10 @@ function publicTrackSummary(source = {}) {
     // beside `atRisk` and the quadrants rather than inside them for the same
     // reason: it counts evidence, not a verdict.
     exiting: finite(source.exiting),
+    // And a third count that is neither of those: leads whose pre-flight verdict
+    // is a veto. A lead can be vetoed at discovery and still be the board's best
+    // mover, so this is deliberately not folded into any other number.
+    blocked: finite(source.blocked),
     quadrants: {
       POOL_PULLED: finite(quadrants.POOL_PULLED),
       DISTRIBUTION: finite(quadrants.DISTRIBUTION),
@@ -774,7 +859,7 @@ export function toPublicStatus(source = {}) {
     sourceHealth: publicSourceHealth(source.sourceHealth),
     auditQueueStats: publicAuditQueueStats(source.auditQueueStats),
     outcomeSummary: publicOutcomeSummary(source.outcomeSummary),
-    track: Array.isArray(source.track) ? source.track.slice(0, 200).map(publicTrack) : [],
+    track: publicTrackList(source.track),
     trackSummary: publicTrackSummary(source.trackSummary),
     policy: {
       chain: text(source.policy?.chain, 32),

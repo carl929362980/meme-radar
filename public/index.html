@@ -624,6 +624,18 @@
     .signal-reason b { font-size: 16px; }
     .signal-anchor { color: #a6babf; font-size: 14px; }
     .signal-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    /* The pre-flight verdict, shown on both panels. Colour is the state, and the
+       reasons sit beside it rather than replacing it: "caution" on its own says
+       nothing actionable. Named neutrally because the signal stream and the
+       tracking board render the same row. */
+    .veto-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; font-size: 14px; }
+    .veto-chip { border: 1px solid currentColor; border-radius: 999px; padding: 1px 8px; font-size: 14px; font-weight: 600; }
+    .veto-row.block { color: #ee7a6a; }
+    .veto-row.caution { color: #e0b567; }
+    .veto-row.clear { color: #6fbf8f; }
+    .veto-row.unknown { color: #8aa0ad; }
+    .veto-row .veto-quiet { color: #7d919b; }
+    .veto-row .veto-good { color: #6fbf8f; }
     /* Tracking board. Every row states the first sighting, the latest
        observation and the change between them, so a signal can always be
        checked against its baseline instead of being taken on trust. */
@@ -1040,6 +1052,37 @@
       signalStatePaused: ['已限频暂停','已限頻暫停','Paused by rate limit','レート制限で停止','레이트리밋 일시정지','موقوف بسبب حد المعدل'],
       signalStateAuth: ['未配置密钥','未設定密鑰','No key configured','キー未設定','키 미설정','لا يوجد مفتاح مُهيأ'],
       signalStateError: ['读取失败','讀取失敗','Read failed','読み取り失敗','읽기 실패','فشل القراءة'],
+      vetoStateBlock: ['否决','否決','Vetoed','否認','거부','مرفوض'],
+      vetoStateCaution: ['注意','注意','Caution','注意','주의','تحذير'],
+      vetoStateClear: ['体检通过','體檢通過','Cleared','審査通過','심사 통과','اجتاز الفحص'],
+      vetoStateUnknown: ['体检不足','體檢不足','Not enough checked','審査不足','심사 부족','فحص غير كافٍ'],
+      vetoChecked: ['已检 {n} 项','已檢 {n} 項','{n} checks ran','{n}項目を審査','{n}개 항목 심사','تم فحص {n} بندًا'],
+      vetoFirstClear: ['首见时通过','首見時通過','clear at first sight','初回時は通過','최초 관측 시 통과','كان سليمًا عند أول رصد'],
+      vetoCreatorSpray: ['创作者已发 {n} 个币','創作者已發 {n} 個幣','creator has launched {n}','作成者が {n} 件発行済み','생성자가 {n}개 발행','أنشأ المنشئ {n} عملة'],
+      vetoDevPresent: ['开发者在场','開發者在場','creator still in','開発者は保有中','개발자 보유 중','المنشئ لا يزال معه'],
+      vetoNameBait: ['名字含诱导词','名字含誘導詞','name contains bait wording','名前に勧誘語を含む','이름에 유인 문구 포함','الاسم يحتوي كلمات إغراء'],
+      vetoNameSquat: ['蹭主流币名','蹭主流幣名','name imitates a major','主要銘柄の名前を模倣','주요 코인 이름 모방','يحاكي اسم عملة رئيسية'],
+      vetoPoolDrained: ['流动性已抽干','流動性已抽乾','liquidity drained','流動性が抜かれた','유동성 인출됨','تم سحب السيولة'],
+      vetoBundlerHeavy: ['捆绑盘 {v}','捆綁盤 {v}','bundled supply {v}','バンドル供給 {v}','번들 물량 {v}','عرض محزوم {v}'],
+      vetoInsiderHeavy: ['内幕盘 {v}','內幕盤 {v}','insider supply {v}','インサイダー供給 {v}','내부자 물량 {v}','عرض داخلي {v}'],
+      vetoSniperHeavy: ['狙击盘 {v}','狙擊盤 {v}','snipers hold {v}','スナイパー保有 {v}','스나이퍼 보유 {v}','حيازة القناصة {v}'],
+      vetoDevHolds: ['DEV 持仓 {v}','DEV 持倉 {v}','dev holds {v}','開発者保有 {v}','개발자 보유 {v}','حيازة المطوّر {v}'],
+      vetoTop10Concentrated: ['前十持仓 {v}','前十持倉 {v}','top 10 hold {v}','上位10が保有 {v}','상위 10개 보유 {v}','أكبر 10 يحوزون {v}'],
+      vetoBotHeavy: ['机器人成交 {v}','機器人成交 {v}','bot trading {v}','ボット取引 {v}','봇 거래 {v}','تداول آلي {v}'],
+      vetoEntrapment: ['陷阱盘 {v}','陷阱盤 {v}','entrapment {v}','トラップ供給 {v}','함정 물량 {v}','عرض فخ {v}'],
+      vetoHighTax: ['交易税 {v}','交易稅 {v}','tax {v}','手数料 {v}','거래세 {v}','ضريبة {v}'],
+      vetoRugRisk: ['Rug 风险 {v}','Rug 風險 {v}','rug ratio {v}','ラグ比率 {v}','러그 비율 {v}','نسبة السحب {v}'],
+      vetoWashTrading: ['刷量交易','刷量交易','wash trading','ウォッシュトレード','워시 트레이딩','تداول وهمي'],
+      vetoAuthorityLive: ['铸造权限未放弃','鑄造權限未放棄','mint authority retained','ミント権限が未放棄','민트 권한 미포기','سلطة السك قائمة'],
+      vetoOneSidedBuy: ['单边买盘 {n} 笔','單邊買盤 {n} 筆','{n} buys, no sells','買いのみ {n} 件','매수만 {n}건','{n} عملية شراء فقط'],
+      vetoOneSidedSell: ['单边卖盘 {n} 笔','單邊賣盤 {n} 筆','{n} sells, no buys','売りのみ {n} 件','매도만 {n}건','{n} عملية بيع فقط'],
+      vetoUnassessedHoneypot: ['貔貅','貔貅','sell restriction','売却制限','매도 제한','قيد البيع'],
+      vetoUnassessedLock: ['锁池','鎖池','LP lock','LPロック','LP 락','قفل السيولة'],
+      vetoUnassessed: ['未检测：{list}','未檢測：{list}','not checked: {list}','未審査：{list}','미검사: {list}','لم يُفحص: {list}'],
+      vetoCurveStageEarly: ['早期','早期','early','初期','초기','مبكر'],
+      vetoCurveStageMid: ['中段','中段','mid','中盤','중반','منتصف'],
+      vetoCurveStageLate: ['临近迁移','臨近遷移','near migration','移行間近','이전 임박','قرب الانتقال'],
+      vetoCurve: ['曲线 {from}→{to} · {rate}/分','曲線 {from}→{to} · {rate}/分','curve {from}→{to} · {rate}/min','曲線 {from}→{to} · {rate}/分','곡선 {from}→{to} · {rate}/분','المنحنى {from}→{to} · {rate}/د'],
       trackSort: ['追踪排序','追蹤排序','Tracking order','追跡の並び','추적 정렬','ترتيب التتبع'],
       trackSortRisk: ['风险优先','風險優先','Risk first','リスク優先','리스크 우선','الخطر أولاً'],
       trackSortChange: ['最近变化优先','最近變化優先','Newest change first','最新の変化順','최근 변화 우선','أحدث تغير أولاً'],
@@ -1081,6 +1124,7 @@
       trackFlowHintExit: ['多个聪明钱/KOL钱包在同一窗口卖出该标的，这是一条退出类预警，先于价格变化出现。','多個聰明錢/KOL錢包在同一視窗賣出該標的，這是一條退出類預警，先於價格變化出現。','Several smart-money or KOL wallets sold this lead inside one window. This is an exit warning and it leads the price.','複数のスマートマネー／KOLウォレットが同一窓で売却しました。これは価格変化に先行する出口警戒です。','여러 스마트머니/KOL 지갑이 같은 구간에서 매도했습니다. 가격 변화에 앞서는 이탈 경보입니다.','باعت عدة محافظ أموال ذكية أو KOL هذا الهدف في نافذة واحدة. هذا تنبيه خروج يسبق تغيّر السعر.'],
       trackFlowHintEntry: ['多个聪明钱/KOL钱包在同一窗口买入该标的。','多個聰明錢/KOL錢包在同一視窗買入該標的。','Several smart-money or KOL wallets bought this lead inside one window.','複数のスマートマネー／KOLウォレットが同一窓で購入しました。','여러 스마트머니/KOL 지갑이 같은 구간에서 매수했습니다.','اشترت عدة محافظ أموال ذكية أو KOL هذا الهدف في نافذة واحدة.'],
       trackExitCount: ['{n} 个在派发','{n} 個在派發','{n} distributing','{n}件が売却中','{n}개 분산 매도 중','{n} توزّع'],
+      trackBlockedCount: ['{n} 个未过体检','{n} 個未過體檢','{n} failed the checklist','{n}件が審査落ち','{n}개 심사 탈락','{n} رسبت في الفحص'],
       trackFeedAnchor: ['发现流锚点','發現流錨點','Discovery-feed anchor','発見フィードの基準','발견 흐름 앵커','مرساة مصدر الاكتشاف'],
       trackLiveTag: ['在榜','在榜','On board','掲載中','목록에 있음','مدرج'],
       liveLp: ['流动性','流動性','Liquidity','流動性','유동성','السيولة'],
@@ -2621,6 +2665,7 @@
       const signature = JSON.stringify([cards.map(function (card) {
         return [card.row.chain, card.row.address, card.row.quadrant, card.row.firstSeenAt, card.row.lastSeenAt,
           card.row.lastSignalAt, card.row.risk, card.row.flow, card.row.exiting, card.row.source,
+          card.row.veto, card.row.firstVeto, card.row.curve,
           card.first, card.last, card.gate, card.cooling, card.row.signals];
       }), mode, currentLocale, data && data.generatedAt]);
       if (signature === trackFingerprint) return;
@@ -2640,6 +2685,10 @@
           // DISTRIBUTION tally would hide how much of that tally the trade feed
           // found on its own.
           + (number(summary.exiting) > 0 ? ' · ' + t('trackExitCount', { n: formatCount(summary.exiting) }) : '')
+          // And a fourth, for the fourth question. A vetoed lead is not a bad
+          // mover and not a drain; it is one the pre-flight checklist would not
+          // have let through, which is a different thing for a reader to know.
+          + (number(summary.blocked) > 0 ? ' · ' + t('trackBlockedCount', { n: formatCount(summary.blocked) }) : '')
         : '';
 
       const money = function (value) { return hasFiniteValue(value) ? formatMoney(value) : t('unknown'); };
@@ -2767,6 +2816,11 @@
           + '<span class="live-tag ' + (card.gate ? 'track-tag-gate' : 'track-tag-watch') + ' track-gate" title="' + escapeHtml(t('trackGateHint')) + '">' + escapeHtml(t(card.gate ? 'trackGatePassed' : 'trackGatePending')) + '</span> '
           + '<span class="live-tag ' + contract.cls + ' track-gate" title="' + escapeHtml(contractTitle) + '">' + escapeHtml(t(contract.key)) + '</span></span></div>'
           + '<div class="track-baseline">' + baseline + (card.cooling ? ' · <span class="track-cooling">' + escapeHtml(t('trackCoolingTag')) + '</span>' : '') + '</div>'
+          // The verdict belongs above the axes. The axes say how the lead has
+          // behaved; the verdict says whether it should ever have been entered -
+          // and a card that put behaviour first would have the reader form an
+          // opinion before reaching the reason not to.
+          + vetoLine(row)
           + '<div class="track-axes">' + axes + '</div>'
           + signalBlock + '</article>';
       }).join('') || '<div class="empty">' + escapeHtml(t('trackEmpty')) + '</div>';
@@ -2783,6 +2837,68 @@
       if (data.status === 'AUTH_REQUIRED') return 'signalStateAuth';
       if (data.status === 'ERROR') return 'signalStateError';
       return 'signalStateWaiting';
+    }
+
+    // One reason, in words. The payloads are not all the same kind of thing - a
+    // count, a rate, a label, a share - so each is formatted on its own terms
+    // instead of being forced through one number formatter. An unreadable value
+    // renders as a dash rather than as a zero, because zero is a real reading.
+    function vetoReasonText(reason) {
+      const value = reason.value;
+      const rate = hasFiniteValue(value) ? Math.round(Number(value) * 100) + '%' : '—';
+      const count = hasFiniteValue(value) ? formatCount(value) : '—';
+      if (reason.code === 'CREATOR_SPRAY') return t('vetoCreatorSpray', { n: count });
+      if (reason.code === 'DEV_PRESENT') return t('vetoDevPresent');
+      if (reason.code === 'NAME_BAIT') return t('vetoNameBait');
+      if (reason.code === 'NAME_SQUAT') return t('vetoNameSquat');
+      if (reason.code === 'POOL_DRAINED') return t('vetoPoolDrained');
+      if (reason.code === 'WASH_TRADING') return t('vetoWashTrading');
+      if (reason.code === 'AUTHORITY_LIVE') return t('vetoAuthorityLive');
+      if (reason.code === 'ONE_SIDED_FLOW') {
+        const total = hasFiniteValue(value && value.total) ? formatCount(value.total) : '—';
+        return t(value && value.side === 'sell' ? 'vetoOneSidedSell' : 'vetoOneSidedBuy', { n: total });
+      }
+      const keys = { BUNDLER_HEAVY: 'vetoBundlerHeavy', INSIDER_HEAVY: 'vetoInsiderHeavy', SNIPER_HEAVY: 'vetoSniperHeavy',
+        DEV_HOLDS: 'vetoDevHolds', TOP10_CONCENTRATED: 'vetoTop10Concentrated', BOT_HEAVY: 'vetoBotHeavy',
+        ENTRAPMENT: 'vetoEntrapment', HIGH_TAX: 'vetoHighTax', RUG_RISK: 'vetoRugRisk' };
+      const key = keys[reason.code];
+      return key ? t(key, { v: rate }) : reason.code;
+    }
+
+    // The verdict row. A row with no verdict renders nothing at all rather than a
+    // reassuring chip: an absent verdict means the question was never asked, and
+    // a green label nothing on the row supports is the one thing this panel must
+    // never print. What could not be looked at is listed for the same reason.
+    function vetoLine(signal) {
+      const veto = signal.veto;
+      if (!veto || !veto.state) return '';
+      const cls = veto.state === 'BLOCK' ? 'block' : veto.state === 'CAUTION' ? 'caution'
+        : veto.state === 'CLEAR' ? 'clear' : 'unknown';
+      const stateKey = veto.state === 'BLOCK' ? 'vetoStateBlock' : veto.state === 'CAUTION' ? 'vetoStateCaution'
+        : veto.state === 'CLEAR' ? 'vetoStateClear' : 'vetoStateUnknown';
+      const parts = (veto.reasons || []).slice(0, 4).map(function (reason) {
+        return '<span>' + escapeHtml(vetoReasonText(reason)) + '</span>';
+      });
+      const missing = (veto.unassessed || []).map(function (code) {
+        return t(code === 'HONEYPOT' ? 'vetoUnassessedHoneypot' : 'vetoUnassessedLock');
+      });
+      if (missing.length) parts.push('<span class="veto-quiet">'
+        + escapeHtml(t('vetoUnassessed', { list: missing.join(' / ') })) + '</span>');
+      // What is in the lead's favour is shown on the same row. A checklist that
+      // could only subtract would be silent about the one thing worth finding,
+      // and on this data the rare case is the good one.
+      for (const entry of (veto.positives || []).slice(0, 3)) {
+        parts.push('<span class="veto-good">'
+          + escapeHtml(vetoReasonText({ code: entry.code, value: entry.value })) + '</span>');
+      }
+      // A pool that was clean at first sight and is not now says something the
+      // state chip alone cannot, so it is stated rather than left to be inferred.
+      const drift = veto.state !== 'CLEAR' && signal.firstVeto && signal.firstVeto.state === 'CLEAR'
+        ? '<span>' + escapeHtml(t('vetoFirstClear')) + '</span>' : '';
+      const checked = hasFiniteValue(veto.assessed)
+        ? '<span class="veto-quiet">' + escapeHtml(t('vetoChecked', { n: formatCount(veto.assessed) })) + '</span>' : '';
+      return '<div class="veto-row ' + cls + '"><span class="veto-chip">' + escapeHtml(t(stateKey)) + '</span>'
+        + parts.join('') + drift + checked + '</div>';
     }
 
     function renderSignals() {
@@ -2811,6 +2927,7 @@
           : signal.strength === 'STRONG' ? 'signalStrengthStrong' : signal.strength === 'MEDIUM' ? 'signalStrengthMedium' : null;
         const wallets = number(signal.wallets), amount = number(signal.amountUsd);
         const firstCap = number(signal.firstMarketCap), cap = number(signal.marketCap), liquidity = number(signal.liquidity);
+        const curve = signal.curve;
         const lines = [];
         if (wallets > 0) lines.push('<div class="signal-reason"><b>' + escapeHtml(t('signalWalletCount', { n: wallets })) + '</b></div>');
         if (wallets > 0 && amount > 0) lines.push('<div class="signal-anchor">'
@@ -2818,6 +2935,17 @@
         if (firstCap > 0 || cap > 0) lines.push('<div class="signal-anchor">'
           + escapeHtml(t('signalAnchor', { first: formatMoney(firstCap), now: formatMoney(cap) })) + '</div>');
         if (liquidity > 0) lines.push('<div class="signal-anchor">' + escapeHtml(t('liveLp') + ' ' + formatMoney(liquidity)) + '</div>');
+        // The curve is shown as travel. A position alone says nothing - every pool
+        // starts at zero - and the rate is the part no single snapshot can carry.
+        if (curve && hasFiniteValue(curve.to)) {
+          const rate = hasFiniteValue(curve.perMinute)
+            ? (Number(curve.perMinute) >= 0 ? '+' : '') + Math.round(Number(curve.perMinute) * 100) + '%' : '—';
+          const stageKey = curve.stage === 'LATE' ? 'vetoCurveStageLate'
+            : curve.stage === 'MID' ? 'vetoCurveStageMid' : 'vetoCurveStageEarly';
+          lines.push('<div class="signal-anchor">' + escapeHtml(t('vetoCurve', {
+            from: Math.round(number(curve.from) * 100) + '%', to: Math.round(number(curve.to) * 100) + '%', rate: rate
+          })) + ' · ' + escapeHtml(t(stageKey)) + '</div>');
+        }
         const tags = ['<span class="live-tag">' + escapeHtml(t(kindKey)) + '</span>'];
         if (kind !== 'new') tags.push('<span class="live-tag">' + escapeHtml(t(activityKey)) + '</span>');
         if (strengthKey) tags.push('<span class="live-tag">' + escapeHtml(t(strengthKey)) + '</span>');
@@ -2832,7 +2960,7 @@
           + escapeHtml(signal.at ? relativeTime(signal.at) : t('noRecord')) + '</span></div>'
           + '<div class="muted">' + escapeHtml(signal.name || '') + '</div>'
           + '<div class="addr mono">' + escapeHtml(String(signal.address).slice(0, 8) + '…' + String(signal.address).slice(-6)) + '</div>'
-          + lines.join('') + '<div class="signal-tags">' + tags.join('') + '</div></article>';
+          + lines.join('') + vetoLine(signal) + '<div class="signal-tags">' + tags.join('') + '</div></article>';
       }).join('') || '<div class="empty">' + escapeHtml(t('signalEmpty')) + '</div>';
     }
 

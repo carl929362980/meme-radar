@@ -51,7 +51,12 @@ test('the production import graph is walked and stays zero-dependency', () => {
   function visit(file) {
     if (visited.has(file)) return;
     visited.add(file);
-    const source = fs.readFileSync(file, 'utf8');
+    // Comments are stripped first. The source legitimately *describes* this rule
+    // in prose, and a sentence such as `separates "clean" from "we could not
+    // see"` otherwise scans as an import of a package by that name. A checker
+    // that fires on the documentation of the property it enforces gets disabled
+    // by the next person, which is the outcome worth preventing here.
+    const source = stripComments(fs.readFileSync(file, 'utf8'));
     const imports = [...source.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s*)['"]([^'"]+)['"]/g)];
     for (const [, specifier] of imports) {
       assert.ok(specifier.startsWith('.') || specifier.startsWith('node:'), `Unexpected runtime dependency: ${specifier}`);

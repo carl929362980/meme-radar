@@ -14,6 +14,7 @@
 // and a radar that dies because a provider hiccupped is worse than one that
 // reports "paused".
 import { GmgnClient, clusterTrades, CLUSTER_WINDOW_MS, loadApiKey } from './gmgn.mjs';
+import { assessLead } from './veto.mjs';
 import { config } from './config.mjs';
 
 export const SIGNAL_KINDS = Object.freeze(['NEW_POOL', 'ENTRY', 'EXIT']);
@@ -60,8 +61,119 @@ const TICK_MS = 5_000;
 // wallets would fall silent, which is how a real accumulation gets missed.
 const REFIRE_MS = 15 * 60_000;
 
+// A radar is meant to run for weeks, so nothing it remembers may grow with the
+// market. Pools and announcements are both retired on the clock that made them
+// meaningful rather than on a count, because a count would either evict something
+// still in use or keep something already dead.
+//
+// A pool can only anchor a cluster while the trade buffer still remembers the
+// trades that formed it, so it is kept for the buffer's span (never less than
+// half an hour, which is also the widest window the pools themselves are drawn
+// from). An announcement only ever suppresses a re-announcement, and past
+// `REFIRE_MS` the cooldown would have let it through anyway.
+//
+// Without this the pool map accumulates one entry per pool ever seen - measured
+// at roughly 100k a day across the two chains - and every tracking fold, which
+// runs every eight minutes, walks the whole map to hand the board the same
+// expired leads over and over. The map is not capped by count because the honest
+// bound is time: at 40 pools a minute the retention window settles at ~2k rows.
+const POOL_RETENTION_MS = 30 * 60_000;
+
 const num = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
 const text = (value, max) => String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, max);
+
+// The risk facts a verdict is made from, pulled off the discovery row. Only the
+// fields the checks actually read are carried, so a stored pool record cannot
+// quietly accumulate provider payload it does not use.
+//
+// `devHoldRate` takes the worst of the two readings the provider offers: one is
+// the team's wallet, the other the creator's, and a position hidden in either is
+// still a position. Both are absent-tolerated - a chain that answers neither
+// simply leaves the check unassessed.
+export function vetoFacts(row) {
+  const team = typeof row.devHoldRate === 'number' ? row.devHoldRate : null;
+  const creator = typeof row.creatorHoldRate === 'number' ? row.creatorHoldRate : null;
+  return {
+    name: row.name ?? null,
+    symbol: row.symbol ?? null,
+    creatorCreatedCount: row.creatorCreatedCount ?? null,
+    creatorTokenStatus: row.creatorTokenStatus ?? null,
+    liquidity: row.liquidity ?? null,
+    bundlerRate: row.bundlerRate ?? null,
+    ratTraderRate: row.ratTraderRate ?? null,
+    insiderHoldRate: row.insiderHoldRate ?? null,
+    sniperHoldRate: row.sniperHoldRate ?? null,
+    devHoldRate: team === null && creator === null ? null : Math.max(team ?? 0, creator ?? 0),
+    top10Rate: row.top10Rate ?? null,
+    botDegenRate: row.botDegenRate ?? null,
+    entrapmentRate: row.entrapmentRate ?? null,
+    buyTax: row.buyTax ?? null,
+    sellTax: row.sellTax ?? null,
+    rugRatio: row.rugRatio ?? null,
+    washTrading: typeof row.washTrading === 'boolean' ? row.washTrading : null,
+    renouncedMint: typeof row.renouncedMint === 'boolean' ? row.renouncedMint : null
+  };
+}
+
+// A refresh that omitted a field did not discover that the field is empty - it
+// simply did not answer. Letting the null through would downgrade a previously
+// assessed check to unassessed and, worse, read as "the risk went away". So a
+// silent response keeps the last thing that was actually said.
+function mergeFacts(previous, next) {
+  const merged = {};
+  for (const key of Object.keys(next)) {
+    merged[key] = next[key] === null ? previous?.[key] ?? null : next[key];
+  }
+  return merged;
+}
+
+// The bonding curve, as a rate of travel rather than a position. A curve at 0.04
+// says almost nothing on its own - every pool starts there - but 0.04 -> 0.33 in
+// four minutes is the whole story, and it is the one reading a single snapshot
+// can never carry. `perMinute` is the honest form of that; `stage` is only the
+// coarse label a card needs.
+const CURVE_LATE = 0.8;
+const CURVE_MID = 0.1;
+
+function curveOf(snapshot, latest) {
+  const from = num(snapshot?.progress);
+  const to = num(latest?.progress);
+  if (from === null || to === null) return null;
+  const minutes = Math.max(0, (Number(latest.at) - Number(snapshot.at)) / 60_000);
+  const delta = to - from;
+  return {
+    from, to, delta,
+    minutes: Math.round(minutes * 10) / 10,
+    perMinute: minutes > 0 ? Math.round((delta / minutes) * 10_000) / 10_000 : null,
+    stage: to >= CURVE_LATE ? 'LATE' : to >= CURVE_MID ? 'MID' : 'EARLY'
+  };
+}
+
+// The other half of keeping a stored record honest: what is no longer observed
+// has to leave. Exported so the retention rule can be tested as the pure function
+// it is, rather than through a clock the test would have to drive for half an
+// hour to observe.
+//
+// An entry with no readable timestamp is retired too. It cannot be placed on the
+// clock, and keeping an unplaceable row forever is not caution - it is the leak.
+export function pruneState(state, at, bufferMs = CLUSTER_WINDOW_MS) {
+  if (!state || typeof state !== 'object') return state;
+  const poolCutoff = at - Math.max(Number(bufferMs) || 0, POOL_RETENTION_MS);
+  if (state.pools instanceof Map) {
+    for (const [address, pool] of state.pools) {
+      const seen = Number(pool?.latest?.at);
+      if (!Number.isFinite(seen) || seen < poolCutoff) state.pools.delete(address);
+    }
+  }
+  const announcedCutoff = at - REFIRE_MS;
+  if (state.announced instanceof Map) {
+    for (const [key, row] of state.announced) {
+      const seen = Number(row?.at);
+      if (!Number.isFinite(seen) || seen < announcedCutoff) state.announced.delete(key);
+    }
+  }
+  return state;
+}
 
 // Entry and exit are not symmetric, so they do not share a rung. Three wallets
 // buying is the published "strong" signal; two is worth watching. Selling is
@@ -200,6 +312,7 @@ export class GmgnDiscovery {
       if (progressed) { state.lastSuccessAt = this.now(); state.status = 'READY'; state.code = null; }
       else if (state.status === 'WAITING') state.status = 'READY';
       state.pollCount++;
+      pruneState(state, this.now(), this.bufferMs);
       this.#derive(chain, state);
     }
   }
@@ -216,26 +329,53 @@ export class GmgnDiscovery {
         // against this snapshot, so a refresh must never overwrite it, or the
         // "what did it look like when we first saw it" question becomes
         // unanswerable retroactively.
-        state.pools.set(row.address, {
+        const facts = vetoFacts(row);
+        const snapshot = { at, marketCap: row.marketCap, liquidity: row.liquidity, holders: row.holders, progress: row.progress };
+        const latest = { at, marketCap: row.marketCap, liquidity: row.liquidity, holders: row.holders, progress: row.progress };
+        const verdict = assessLead({ chain, facts });
+        const pool = {
           address: row.address,
           symbol: text(row.symbol, 30),
           name: text(row.name, 80),
           firstSeenAt: at,
-          snapshot: { at, marketCap: row.marketCap, liquidity: row.liquidity, holders: row.holders, progress: row.progress },
-          latest: { at, marketCap: row.marketCap, liquidity: row.liquidity, holders: row.holders, progress: row.progress }
-        });
+          // The market anchor is frozen; the verdict deliberately is not. "Can
+          // this be entered" is a question about now, and the facts behind it
+          // move - a creator closes a position, a bundler rate climbs. So both
+          // answers are kept: `firstVeto` is what was true when the pool was
+          // found, `veto` is what is true as of `vetoAt`. The pair is the useful
+          // thing, because "clear when found, creator gone since" is exactly the
+          // sentence a card should be able to say.
+          facts,
+          firstVeto: verdict,
+          veto: verdict,
+          vetoAt: at,
+          snapshot,
+          latest,
+          // At the first sighting the pool has not travelled: `minutes` is zero
+          // and `perMinute` is null rather than a made-up rate.
+          curve: curveOf(snapshot, latest),
+          createdAt: row.createdAt,
+          launchpad: text(row.launchpad, 40)
+        };
+        state.pools.set(row.address, pool);
         this.#push(state, {
           kind: 'NEW_POOL', reason: 'FIRST_SIGHTING', chain,
-          address: row.address, symbol: text(row.symbol, 30), name: text(row.name, 80),
+          address: row.address, symbol: pool.symbol, name: pool.name,
           at, strength: null, wallets: null, amountUsd: null, closes: null,
           kol: null, smartMoney: null, activity: null,
           marketCap: row.marketCap, liquidity: row.liquidity, holders: row.holders,
           progress: row.progress, firstSeenAt: at,
-          createdAt: row.createdAt, launchpad: text(row.launchpad, 40)
+          createdAt: row.createdAt, launchpad: pool.launchpad,
+          veto: pool.veto, firstVeto: pool.firstVeto, curve: pool.curve
         });
         state.counts.newPool++;
       } else {
         existing.latest = { at, marketCap: row.marketCap, liquidity: row.liquidity, holders: row.holders, progress: row.progress };
+        // Only the travel is recomputed. The anchor stays put.
+        existing.curve = curveOf(existing.snapshot, existing.latest);
+        existing.facts = mergeFacts(existing.facts, vetoFacts(row));
+        existing.veto = assessLead({ chain, facts: existing.facts });
+        existing.vetoAt = at;
       }
     }
     return true;
@@ -263,6 +403,7 @@ export class GmgnDiscovery {
   // drift out of step with the rows it is supposed to describe.
   #derive(chain, state) {
     const clusters = clusterTrades(state.trades, { windowMs: this.bufferMs, now: this.now() });
+    const flow = this.#flowIndex(state);
     for (const cluster of clusters) {
       const decision = classify(chain, cluster, { minWallets: this.minWallets });
       if (!decision) continue;
@@ -286,10 +427,35 @@ export class GmgnDiscovery {
         holders: pool?.latest.holders ?? null, progress: pool?.latest.progress ?? null,
         firstSeenAt: pool?.firstSeenAt ?? null,
         firstMarketCap: pool?.snapshot.marketCap ?? null, firstLiquidity: pool?.snapshot.liquidity ?? null,
-        createdAt: null, launchpad: null
+        createdAt: null, launchpad: null,
+        // The pool's own verdict, re-appraised with one further piece of evidence
+        // the first sighting could not have had: how the wallet buffer is split
+        // for this address. Same frozen facts, one more reading - this is not a
+        // second opinion from a different source, which is the distinction the
+        // project's no-mixed-rulers rule actually cares about.
+        veto: pool ? assessLead({ chain, facts: pool.facts, flow: flow.get(cluster.address) }) : null,
+        firstVeto: pool?.firstVeto ?? null,
+        curve: pool?.curve ?? null
       });
       if (decision.kind === 'ENTRY') state.counts.entry++; else state.counts.exit++;
     }
+  }
+
+  // The buy/sell split per address over the same window the clusters use. Built
+  // from the trade rows themselves rather than read from the provider, because a
+  // one-sided book is a property of the trades: no single snapshot field can
+  // express "nothing but buys has happened here".
+  #flowIndex(state) {
+    const cutoff = Math.floor((this.now() - this.bufferMs) / 1000);
+    const index = new Map();
+    for (const row of state.trades) {
+      if (Number(row.at) < cutoff) continue;
+      if (row.side !== 'buy' && row.side !== 'sell') continue;
+      const entry = index.get(row.address) || { buys: 0, sells: 0 };
+      if (row.side === 'buy') entry.buys++; else entry.sells++;
+      index.set(row.address, entry);
+    }
+    return index;
   }
 
   #push(state, signal) {
@@ -334,7 +500,8 @@ export class GmgnDiscovery {
         baseline: { marketCap: pool.snapshot.marketCap, liquidity: pool.snapshot.liquidity,
           holders: pool.snapshot.holders, at: pool.firstSeenAt },
         marketCap: pool.latest.marketCap, liquidity: pool.latest.liquidity,
-        holders: pool.latest.holders, at: pool.latest.at
+        holders: pool.latest.holders, at: pool.latest.at,
+        veto: pool.veto, firstVeto: pool.firstVeto, curve: pool.curve
       })),
       flows: [...latest.values()]
     };
@@ -371,7 +538,11 @@ export class GmgnDiscovery {
         .sort((a, b) => b.firstSeenAt - a.firstSeenAt)
         .slice(0, 100)
         .map((pool) => ({ address: pool.address, symbol: pool.symbol, name: pool.name,
-          firstSeenAt: pool.firstSeenAt, first: pool.snapshot, latest: pool.latest })),
+          firstSeenAt: pool.firstSeenAt, first: pool.snapshot, latest: pool.latest,
+          // The verdict and the curve travel with the pool, not with the signal:
+          // a card that has lost its cluster still needs to say what was on the
+          // record when the pool was found.
+          veto: pool.veto, firstVeto: pool.firstVeto, vetoAt: pool.vetoAt, curve: pool.curve })),
       signals: state.signals.slice(0, 100)
     };
   }

@@ -406,3 +406,90 @@ test('a tracked lead carries its wallet flow, its baseline source, and nothing e
   assert.equal(unknown.signals[0].kind, null);
   assert.equal(body.trackSummary.exiting, 1);
 });
+
+// The row cap has to be spent on the freshest leads, not on the first ones
+// stored. Records are appended in the order they were first seen and are never
+// reordered, so a plain head-slice keeps the oldest rows and hides every new
+// lead - the one thing this board exists to show.
+test('the capped board sends the freshest leads rather than whichever were stored first', async () => {
+  const at = Date.now();
+  const record = (index, lastSeenAt) => ({
+    chain: 'bsc', address: '0x' + String(index + 1).padStart(40, '0'), symbol: 'T' + index,
+    source: 'feed', firstSeenAt: at + index, lastSeenAt,
+    snapshot: { price: null, marketCap: 20_000, liquidity: 10_000, holders: 100, top10Rate: null, at },
+    latest: { price: null, marketCap: 20_000, liquidity: 10_000, holders: 100, top10Rate: null, at: lastSeenAt },
+    risk: null, reached: {}, signals: []
+  });
+  // Stored oldest-first. The two orders cannot accidentally agree whichever way
+  // the freshest rows are picked.
+  const stored = Array.from({ length: 250 }, (unused, index) => record(index, at + index));
+
+  const server = createServer({ settings, supportedChains: ['sol', 'bsc'], controls: { value: {} }, state: { value: {
+    activeChain: 'bsc', status: 'RUNNING', events: [], chainStates: {}, track: stored,
+    trackSummary: { tracked: 250, active: 250, cooling: 0, atRisk: 0, exiting: 0,
+      quadrants: { POOL_PULLED: 0, DISTRIBUTION: 0, BREAKOUT: 0, WATCH: 250 }, recentSignals: [] }
+  } } });
+
+  const { status, body } = await dispatch(server, '/api/status', { method: 'GET' });
+  assert.equal(status, 200);
+  assert.equal(body.track.length, 200, 'the payload stays bounded');
+  assert.equal(body.track[0].symbol, 'T249', 'the most recently seen lead is the one that must survive the cap');
+  assert.equal(body.track.some(row => row.symbol === 'T0'), false, 'the stalest stored rows are what gets dropped');
+  assert.equal(Math.min(...body.track.map(row => row.lastSeenAt)), at + 50);
+});
+
+// The pre-flight verdict, projected. The verdict maths has its own suite; what is
+// under test here is the whitelist, because this is the only place a new field
+// can silently reach the page.
+test('a signal carries its verdict, narrowed to the codes the page can name', async () => {
+  const at = 1_791_000_000_000;
+  const address = 'So11111111111111111111111111111111111111112';
+  const verdict = (over = {}) => ({ state: 'CAUTION', reasons: [], unassessed: ['HONEYPOT', 'LOCK'],
+    assessed: 16, coverage: 0.89, ...over });
+  const signals = { snapshot: () => ({
+    status: 'READY', enabled: true, stale: false, counts: { newPool: 1, entry: 1, exit: 0 },
+    pools: [{
+      address, symbol: 'FISH', name: 'Fish', firstSeenAt: at,
+      first: { marketCap: 20_000, liquidity: 10_000, holders: 100, progress: 0.04, at },
+      latest: { marketCap: 40_000, liquidity: 12_000, holders: 180, progress: 0.33, at: at + 240_000 },
+      veto: verdict({ reasons: [{ code: 'BUNDLER_HEAVY', level: 'CAUTION', value: 0.44 }] }),
+      curve: { from: 0.04, to: 0.33, delta: 0.29, minutes: 4, perMinute: 0.0725, stage: 'MID' }
+    }],
+    signals: [{
+      id: 'sol-1', kind: 'ENTRY', reason: 'CLUSTER_ENTRY', address, symbol: 'FISH', name: 'Fish',
+      at, strength: 'STRONG', wallets: 3, amountUsd: 900, closes: 0, kol: true, smartMoney: true,
+      activity: 'BOTH', marketCap: 40_000, liquidity: 12_000, holders: 180, progress: 0.33,
+      firstSeenAt: at, firstMarketCap: 20_000, firstLiquidity: 10_000, createdAt: null,
+      veto: verdict({ state: 'BLOCK', facts: { creatorCreatedCount: 288 }, secret: 'leak',
+        reasons: [
+          { code: 'CREATOR_SPRAY', level: 'BLOCK', value: 288 },
+          { code: 'NOT_A_REAL_CODE', level: 'BLOCK', value: 1 },
+          { code: 'BUNDLER_HEAVY', level: 'SEVERE', value: 1 },
+          { code: 'INSIDER_HEAVY', level: 'CAUTION', value: 0.31 },
+          { code: 'ONE_SIDED_FLOW', level: 'CAUTION', value: { side: 'buy', share: 1, total: 12, secret: 'leak' } }
+        ] }),
+      firstVeto: verdict({ state: 'CLEAR' }),
+      curve: { from: 0.04, to: 0.33, delta: 0.29, minutes: 4, perMinute: 0.0725, stage: 'SIDEWAYS' }
+    }]
+  }) };
+
+  const server = createServer({ settings, supportedChains: ['sol', 'bsc'], controls: { value: {} },
+    state: { value: { activeChain: 'sol', status: 'RUNNING', events: [], chainStates: {} } }, signals });
+  const { status, body } = await dispatch(server, '/api/signals', { body: { chain: 'sol' } });
+  assert.equal(status, 200);
+  const signal = body.signals[0];
+
+  assert.equal(signal.veto.state, 'BLOCK');
+  assert.deepEqual(signal.veto.reasons.map((row) => row.code), ['CREATOR_SPRAY', 'INSIDER_HEAVY', 'ONE_SIDED_FLOW'],
+    'a code the page cannot name and a level it cannot render are both dropped, not forwarded');
+  assert.deepEqual(signal.veto.unassessed, ['HONEYPOT', 'LOCK'], 'what was not looked at survives projection');
+  assert.equal(signal.veto.assessed, 16);
+  assert.equal(signal.firstVeto.state, 'CLEAR');
+  // A structured payload is narrowed field by field, not passed through.
+  assert.deepEqual(signal.veto.reasons[2].value, { side: 'buy', share: 1, total: 12 });
+  // A curve stage the page has no phrase for is dropped rather than rendered raw.
+  assert.equal(signal.curve.stage, null);
+  assert.equal(body.pools[0].curve.stage, 'MID');
+  assert.equal(body.pools[0].veto.state, 'CAUTION');
+  assert.doesNotMatch(JSON.stringify(body), /leak|"facts"|secret/);
+});

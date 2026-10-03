@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { GmgnDiscovery, CHAIN_PLANS, SIGNAL_KINDS, createGmgnDiscovery } from '../src/gmgn-discovery.mjs';
+import { GmgnDiscovery, CHAIN_PLANS, SIGNAL_KINDS, createGmgnDiscovery, pruneState } from '../src/gmgn-discovery.mjs';
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -44,6 +44,18 @@ function poolRow(overrides = {}) {
     progress: 0.2, createdAt: 1_790_999_000, launchpad: 'Pump.fun', ...overrides
   };
 }
+
+// A row shaped the way the provider actually answers: the coverage audit measured
+// every field below at 100% on SOL, so a row without them is a fixture artefact
+// rather than a realistic pool - and a verdict made from it would be UNKNOWN for
+// the right reason (not enough was asked), which is not what these tests are
+// about. `poolRow` stays sparse so the coverage tests can use it.
+const richPool = (overrides = {}) => poolRow({
+  creatorCreatedCount: 4, creatorTokenStatus: 'creator_hold',
+  bundlerRate: 0.01, ratTraderRate: 0.01, insiderHoldRate: 0.01, sniperHoldRate: 0.01,
+  devHoldRate: 0, top10Rate: 0.2, botDegenRate: 0.01, entrapmentRate: 0,
+  buyTax: 0, sellTax: 0, rugRatio: 0.01, washTrading: false, renouncedMint: true, ...overrides
+});
 
 let makerSeed = 0;
 function tradeRow(address, maker, side, at, overrides = {}) {
@@ -409,4 +421,179 @@ test('the app hands the discovery engine to the tracking board as its second sou
 
   assert.equal(captured.options.feed, captured.engine,
     'the object the scanner is handed must be the engine that was built, and built first');
+});
+
+// The pre-flight verdict. Two things are being pinned here: that "can this be
+// entered" is answered from the newest facts rather than frozen beside the
+// anchor, and that the answer given at discovery survives as its own claim.
+test('a pool carries a verdict, which follows the facts, while the first verdict is kept', async () => {
+  const address = 'MintV11111111111111111111111111111111111111';
+  let created = 4;
+  let status = 'creator_hold';
+  const { client } = fakeClient({ pools: [] });
+  client.trenches = async () => [richPool({ address, creatorCreatedCount: created, creatorTokenStatus: status })];
+  const h = harness({ client });
+  h.engine.start();
+  await h.tick();
+
+  const found = h.engine.snapshot('sol').pools[0];
+  assert.equal(found.veto.state, 'CLEAR');
+  assert.equal(found.firstVeto.state, 'CLEAR');
+  assert.deepEqual(found.veto.positives.map((row) => row.code), ['DEV_PRESENT'],
+    'a creator still holding is the minority, so it is the thing worth reporting');
+  assert.ok(found.veto.assessed >= 6, 'a clearance needs enough checks to mean something');
+  assert.ok(found.veto.unassessed.includes('HONEYPOT'), 'and it must still say what it could not look at');
+
+  // Between two polls the creator turns out to be a mint factory. A frozen
+  // verdict would keep calling this pool clean, which is the exact failure a
+  // safety layer must not have.
+  created = 9_000;
+  status = 'creator_close';
+  h.advance(CHAIN_PLANS.sol.poolMs + 1_000);
+  await h.tick();
+
+  const later = h.engine.snapshot('sol').pools[0];
+  assert.equal(later.veto.state, 'BLOCK');
+  assert.equal(later.veto.reasons[0].code, 'CREATOR_SPRAY');
+  assert.deepEqual(later.veto.positives, [], 'and the favourable mark is withdrawn along with the fact behind it');
+  assert.ok(later.vetoAt > found.firstSeenAt, 'the current verdict is dated');
+  // ...and the record of what was true at discovery is untouched, because
+  // "clear then, vetoed now" is itself the most useful sentence on the card.
+  assert.equal(later.firstVeto.state, 'CLEAR');
+  assert.equal(found.firstVeto.state, 'CLEAR');
+});
+
+test('a refresh that says nothing does not erase what the provider already said', async () => {
+  const address = 'MintY11111111111111111111111111111111111111';
+  let creatorCount = 4;
+  const { client } = fakeClient({ pools: [] });
+  client.trenches = async () => [richPool({ address, creatorCreatedCount: creatorCount })];
+  const h = harness({ client });
+  h.engine.start();
+  await h.tick();
+  const before = h.engine.snapshot('sol').pools[0].veto;
+  assert.ok(before.assessed >= 6);
+
+  // A provider that omits a field has not discovered the field is empty. Calling
+  // that "unassessed" would be tolerable; letting it read as "the risk went
+  // away" would not. A dropped field would show up as one fewer assessed check.
+  creatorCount = undefined;
+  h.advance(CHAIN_PLANS.sol.poolMs + 1_000);
+  await h.tick();
+  assert.equal(h.engine.snapshot('sol').pools[0].veto.assessed, before.assessed,
+    'the check still has its last real answer');
+
+  // And the retention must not be mistaken for a refusal to update: a later
+  // response that does answer with a bad value has to take effect.
+  creatorCount = 9_000;
+  h.advance(CHAIN_PLANS.sol.poolMs + 1_000);
+  await h.tick();
+  const replied = h.engine.snapshot('sol').pools[0].veto;
+  assert.equal(replied.state, 'BLOCK');
+  assert.equal(replied.reasons.find((reason) => reason.code === 'CREATOR_SPRAY').value, 9_000);
+});
+
+test('the curve is reported as travel rather than as a position', async () => {
+  const address = 'MintW11111111111111111111111111111111111111';
+  let progress = 0.04;
+  const { client } = fakeClient({ pools: [] });
+  client.trenches = async () => [poolRow({ address, progress })];
+  const h = harness({ client });
+  h.engine.start();
+  await h.tick();
+
+  const start = h.engine.snapshot('sol').pools[0].curve;
+  assert.equal(start.stage, 'EARLY');
+  assert.equal(start.minutes, 0);
+  assert.equal(start.perMinute, null, 'a pool that has not travelled has no rate, and inventing one would be a lie');
+
+  progress = 0.33;
+  h.advance(4 * 60_000);
+  await h.tick();
+
+  const moved = h.engine.snapshot('sol').pools[0].curve;
+  assert.equal(moved.from, 0.04, 'the travel starts at the frozen sighting, not at the last poll');
+  assert.equal(moved.to, 0.33);
+  assert.equal(moved.minutes, 4);
+  assert.equal(moved.perMinute, 0.0725);
+  assert.equal(moved.stage, 'MID');
+});
+
+test('a cluster verdict uses the one fact only the trade buffer holds', async () => {
+  const address = 'MintX11111111111111111111111111111111111111';
+  const { client, state } = fakeClient({ pools: [richPool({ address })] });
+  const makers = Array.from({ length: 8 }, (unused, index) => 'Wallet' + index);
+  state.trades.smartmoney = makers.map((maker, index) => tradeRow(address, maker, 'buy', 1_790_999_990 + index));
+  const h = harness({ client, minWallets: 3 });
+  h.engine.start();
+  await h.tick();
+
+  const signal = h.engine.snapshot('sol').signals.find((row) => row.kind === 'ENTRY');
+  assert.ok(signal, 'eight wallets buying is a cluster');
+  // A market snapshot cannot express "nothing but buys has happened here" - that
+  // is a property of the trades, and it is why the verdict is re-made here.
+  assert.deepEqual(signal.veto.reasons.map((reason) => reason.code), ['ONE_SIDED_FLOW']);
+  assert.equal(signal.veto.reasons[0].value.side, 'buy');
+  assert.equal(signal.veto.state, 'CAUTION');
+  assert.equal(signal.firstVeto.state, 'CLEAR', 'the pool was clean when it was first seen');
+
+  // Where the pool was never sighted the verdict is absent, not favourable.
+  const orphan = h.engine.snapshot('sol');
+  assert.equal(orphan.pools.length, 1);
+});
+
+// A radar is bought to run for weeks, so what it remembers has to be bounded by
+// time rather than by luck. The pool map is the one structure on the feed that
+// used to grow with the market: one entry per pool ever seen, roughly 100k a day
+// across the two chains, handed to the tracking board on every fold forever.
+test('what is no longer observed is retired, and an unplaceable row is not kept out of caution', () => {
+  const at = 1_791_000_000_000;
+  const state = {
+    pools: new Map([
+      ['still-seen', { latest: { at: at - 20 * 60_000 } }],
+      ['long-gone', { latest: { at: at - 40 * 60_000 } }],
+      ['undated', { latest: {} }]
+    ]),
+    announced: new Map([
+      ['a:ENTRY', { at: at - 10 * 60_000 }],
+      ['b:ENTRY', { at: at - 20 * 60_000 }],
+      ['c:ENTRY', { at: Number.NaN }]
+    ])
+  };
+  pruneState(state, at, 30 * 60_000);
+  assert.deepEqual([...state.pools.keys()], ['still-seen'], 'a pool still inside the buffer window stays');
+  assert.deepEqual([...state.announced.keys()], ['a:ENTRY'], 'an announcement past its cooldown is forgotten');
+});
+
+test('retention never shortens below the window a pool can still anchor a cluster with', () => {
+  const at = 1_791_000_000_000;
+  const state = { pools: new Map([['seen', { latest: { at: at - 25 * 60_000 } }]]), announced: new Map() };
+  // A caller asking for a two-minute buffer must not have retention follow it
+  // down, or a pool would be evicted between two polls while it is still live.
+  pruneState(state, at, 2 * 60_000);
+  assert.deepEqual([...state.pools.keys()], ['seen']);
+});
+
+test('malformed state is left alone rather than throwing', () => {
+  assert.equal(pruneState(null, 0), null);
+  const state = { pools: new Map(), announced: new Map() };
+  assert.equal(pruneState(state, 0), state);
+  assert.doesNotThrow(() => pruneState({}, 0), 'a state without the two maps is not this function\'s problem');
+});
+
+test('a pool the feed has stopped seeing is dropped instead of accumulating forever', async () => {
+  const first = richPool({ address: 'PoolA1111111111111111111111111111111111111', symbol: 'OLD' });
+  const next = richPool({ address: 'PoolB1111111111111111111111111111111111111', symbol: 'NEW' });
+  const { client, state } = fakeClient({ pools: [first] });
+  const h = harness({ client });
+  h.engine.start();
+  await h.tick();
+  assert.deepEqual(h.engine.snapshot('sol').pools.map((row) => row.address), [first.address]);
+
+  state.pools = [next];
+  h.advance(31 * 60_000);
+  await h.tick();
+  assert.deepEqual(h.engine.snapshot('sol').pools.map((row) => row.address), [next.address],
+    'the pool whose trades the buffer has forgotten is gone, and only the live one is left');
+  assert.equal(h.engine.snapshot('sol').poolCount, 1);
 });

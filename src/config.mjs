@@ -69,6 +69,11 @@ export const config = Object.freeze({
   // Tracking is a first-sighting comparison, so it is kept on its own retention
   // clock instead of the outcome windows that calibration depends on.
   trackRetentionMs: 7 * 24 * 60 * 60_000,
+  // Feed leads age on the feed's clock, not the market board's. The discovery
+  // feed only ever knows a pool while it is inside its own half-hour window, so
+  // a lead it has stopped reporting is not a lead. Sharing the week above would
+  // keep every pool ever seen and grow the state file without bound.
+  feedTrackRetentionMs: 60 * 60_000,
   trackSignalLimit: 40,
   trackCoolingMs: 30 * 60_000,
   // Holder concentration and a contract-safety verdict come from GoPlus, a

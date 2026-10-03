@@ -72,6 +72,20 @@ export const FLOW_STRENGTHS = Object.freeze(['VERY_STRONG', 'STRONG', 'MEDIUM'])
 // that a lead is not branded for life by one afternoon's rotation.
 export const EXIT_ALERT_MS = 30 * 60_000;
 
+// A feed lead and a market lead do not age at the same rate, so they must not
+// share one clock. The market hot list lists pools that are still notable a day
+// later. The discovery feed only ever knows about a pool while it is inside its
+// own window - half an hour, for this chain - so a feed lead the feed has stopped
+// reporting is not a lead any more, it is a memory.
+//
+// Sharing the market board's week would mean keeping every pool ever seen: at the
+// measured arrival rate that is tens of thousands of records a day per chain, a
+// state file in the hundreds of megabytes, rewritten on every cycle, and a board
+// nobody can read. The bound is derived from the feed's own horizon rather than
+// chosen by feel - twice the window a pool can still appear in - which is long
+// enough to watch a curve travel and short enough that the board stays a board.
+export const FEED_LEAD_RETENTION_MS = 60 * 60_000;
+
 const finite = value => (Number.isFinite(value) ? value : null);
 // A rate keeps zero as a real reading: "no concentration" and "no holders list
 // returned" must not collapse into the same value.
@@ -229,7 +243,7 @@ const sharesFeed = (record, observation) => sourceOf(record?.source) === sourceO
 //                 not evidence that this product observed a pool, and a baseline
 //                 invented out of a trade would make every card's anchor a guess.
 export function observeTracks(records, observations, now = Date.now(),
-  { retentionMs = 7 * 24 * 60 * 60_000, signalLimit = 40, pools = [], flows = [] } = {}) {
+  { retentionMs = 7 * 24 * 60 * 60_000, feedRetentionMs = FEED_LEAD_RETENTION_MS, signalLimit = 40, pools = [], flows = [] } = {}) {
   const byAddress = new Map((Array.isArray(records) ? records : []).map(row => [trackKey(row.address), { ...row }]));
 
   const fold = observation => {
@@ -244,9 +258,18 @@ export function observeTracks(records, observations, now = Date.now(),
     const snapshot = previous?.snapshot ? fillMissingBaselines({ ...previous.snapshot }, seen, previous.reached) : { ...seen, at: now };
     const latest = { ...seen, at: now };
     const risk = mergeTrackRisk(previous?.risk, { risk: observation.risk, at: now });
+    // The verdict is carried but never recomputed here. It is made where the risk
+    // facts live; the board's job is to show it beside the market axis, not to
+    // form a second opinion out of numbers it does not hold. An observation that
+    // arrives without one - the market feed never has one - leaves the last real
+    // answer in place rather than clearing it.
+    const verdict = observation.veto ?? previous?.veto ?? null;
+    const firstVerdict = observation.firstVeto ?? previous?.firstVeto ?? null;
+    const curve = observation.curve ?? previous?.curve ?? null;
     let record;
     if (previous) {
-      record = { ...previous, snapshot, latest, risk, lastSeenAt: now, symbol: observation.symbol || previous.symbol };
+      record = { ...previous, snapshot, latest, risk, lastSeenAt: now, symbol: observation.symbol || previous.symbol,
+        veto: verdict, firstVeto: firstVerdict, curve };
     } else {
       // A feed that already holds an earlier reading of its own may hand it over
       // as the anchor. The board's promise is "first sighting", and the honest
@@ -259,7 +282,8 @@ export function observeTracks(records, observations, now = Date.now(),
       const anchor = observation.baseline ? trackSnapshot(observation.baseline) : seen;
       record = { chain: observation.chain || '', address: String(observation.address), symbol: observation.symbol || '',
         source: sourceOf(observation.source), firstSeenAt: anchorAt, lastSeenAt: now,
-        snapshot: { ...anchor, at: anchorAt }, latest, risk, reached: {}, signals: [] };
+        snapshot: { ...anchor, at: anchorAt }, latest, risk, reached: {}, signals: [],
+        veto: verdict, firstVeto: firstVerdict, curve };
     }
     const signals = dueTrackSignals(record, now);
     if (signals.length) {
@@ -297,7 +321,14 @@ export function observeTracks(records, observations, now = Date.now(),
     if (merged.at > Number(record.lastSignalAt || 0)) record.lastSignalAt = merged.at;
   }
 
-  return [...byAddress.values()].filter(row => now - Number(row.firstSeenAt || 0) <= retentionMs);
+  // Two retention clocks, spent per record. A lead's source is fixed when the
+  // record is created and never changes (see `sharesFeed`), so it is knowable
+  // here without asking which feed last touched it. A feed lead is never allowed
+  // to outlive a market one, even if a caller asks for a longer window than the
+  // board's own: it would be the same hoard under a different name.
+  const feedKeep = Math.min(Number(feedRetentionMs) || retentionMs, retentionMs);
+  return [...byAddress.values()]
+    .filter(row => now - Number(row.firstSeenAt || 0) <= (sourceOf(row.source) === 'feed' ? feedKeep : retentionMs));
 }
 
 const QUADRANTS = Object.freeze(['POOL_PULLED', 'DISTRIBUTION', 'BREAKOUT', 'WATCH']);
@@ -308,6 +339,7 @@ export function summarizeTracking(records, now = Date.now(), { coolingMs = 30 * 
   let cooling = 0;
   let atRisk = 0;
   let exiting = 0;
+  let blocked = 0;
   for (const row of rows) {
     quadrants[classifyTrack(row, now)]++;
     if (now - Number(row.lastSeenAt || 0) > coolingMs) cooling++;
@@ -319,8 +351,13 @@ export function summarizeTracking(records, now = Date.now(), { coolingMs = 30 * 
     // Counted separately from the quadrant: a contract verdict says nothing
     // about price behaviour, and the two must not be blended into one number.
     if (row.risk?.verdict === 'FATAL') atRisk++;
+    // And a third time, for a third question. The pre-flight verdict asks whether
+    // a lead *should* be entered; the quadrant asks how it is behaving. A lead
+    // can be vetoed at discovery and still be the best mover on the board, and
+    // collapsing those into one number would lose both readings.
+    if (row.veto?.state === 'BLOCK') blocked++;
   }
   const signals = rows.flatMap(row => (row.signals || []).map(signal => ({ ...signal, address: row.address, symbol: row.symbol, chain: row.chain })))
     .sort((a, b) => b.at - a.at).slice(0, 20);
-  return { tracked: rows.length, cooling, active: rows.length - cooling, atRisk, exiting, quadrants, recentSignals: signals };
+  return { tracked: rows.length, cooling, active: rows.length - cooling, atRisk, exiting, blocked, quadrants, recentSignals: signals };
 }
