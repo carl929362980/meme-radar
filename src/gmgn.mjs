@@ -39,7 +39,25 @@ const PACING_BUDGET_MS = 30_000;
 export const GMGN_ROUTES = Object.freeze({
   trenches: Object.freeze({ method: 'POST', path: '/v1/trenches', weight: 3 }),
   trending: Object.freeze({ method: 'GET', path: '/v1/market/rank', weight: 1 }),
-  signal: Object.freeze({ method: 'POST', path: '/v1/market/token_signal', weight: 3 })
+  signal: Object.freeze({ method: 'POST', path: '/v1/market/token_signal', weight: 3 }),
+  // The highest-value alpha this provider exposes, and the cheapest: the
+  // trenches feed is a firehose where >99% of rows are junk, while these two
+  // return what wallets with a *measured* track record are trading right now.
+  // Both are weight 1 and both use exist-auth (API key only, no signature),
+  // so a cluster of smart-money buys is affordable to poll continuously.
+  smartmoney: Object.freeze({ method: 'GET', path: '/v1/user/smartmoney', weight: 1 }),
+  kol: Object.freeze({ method: 'GET', path: '/v1/user/kol', weight: 1 })
+});
+
+export const TRACK_KINDS = Object.freeze(['smartmoney', 'kol']);
+
+// A sell priced in the chain's native token reports the *native* mint as
+// base_address, so the feed contains rows like "sold WSOL" that look like a
+// token trade and mean nothing. Measured on the live feed: the native mint
+// shows up within the first three rows. These are never mint subjects.
+export const NATIVE_MINTS = Object.freeze({
+  sol: Object.freeze(['So11111111111111111111111111111111111111112']),
+  bsc: Object.freeze(['0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c'])
 });
 
 export const TRENCHES_TYPES = Object.freeze(['new_creation', 'near_completion', 'completed']);
@@ -250,6 +268,94 @@ export function normalizeTrenchesRow(row, chain, at) {
     telegram: text(row.telegram, 120),
     observedAt: at
   };
+}
+
+// One wallet-trade row -> the neutral shape this project reasons about.
+//
+// The convention worth getting right: on the kol/smartmoney routes
+// `is_open_or_close` is 0 for opened/added and 1 for closed/reduced, which is
+// the *opposite* of the follow-wallet route. Only these two routes are read
+// here, so the field is exposed as `isClose` and never as "is open".
+export function normalizeTrackRow(row, chain, kind) {
+  if (!row || typeof row !== 'object') return null;
+  const address = gmgnBareAddress(chain, row.base_address);
+  const maker = String(row.maker ?? '').trim();
+  if (!address || !maker) return null;
+  const flagValue = num(row.is_open_or_close);
+  const side = row.side === 'sell' ? 'sell' : row.side === 'buy' ? 'buy' : null;
+  return {
+    provider: 'GMGN',
+    kind,
+    chain,
+    // base_address is the token being traded; quote_address (SOL) is only what
+    // it was priced in and must never be mistaken for the subject.
+    address,
+    maker,
+    side,
+    // Missing stays null: an unanswered direction question is not "hold".
+    isClose: flagValue === null ? null : flagValue === 1,
+    amountUsd: num(row.amount_usd),
+    priceUsd: num(row.price_usd),
+    buyCostUsd: num(row.buy_cost_usd),
+    tokenAmount: num(row.token_amount),
+    at: num(row.timestamp),
+    symbol: text(row.base_token?.symbol, 30),
+    launchpad: text(row.base_token?.launchpad, 40),
+    twitter: text(row.maker_info?.twitter_username, 60),
+    tags: Array.isArray(row.maker_info?.tags) ? row.maker_info.tags.map((tag) => text(tag, 24)).filter(Boolean) : []
+  };
+}
+
+// Convergence detection: several distinct wallets buying the same token inside
+// a short window is a stronger statement than any single trade, and it is the
+// one signal a firehose cannot produce. Counted per (token, side) over distinct
+// makers so one wallet trading twice never reads as two wallets.
+export const CLUSTER_WINDOW_MS = 30 * 60_000;
+
+export function clusterTrades(rows, { windowMs = CLUSTER_WINDOW_MS, now = Date.now() } = {}) {
+  // `at` arrives as Unix *seconds* while `now` is milliseconds. Comparing them
+  // directly fails the window test for every row, which looks exactly like "no
+  // convergence out there" - so the conversion is done once, here.
+  const fresh = [];
+  for (const row of (Array.isArray(rows) ? rows : [])) {
+    if (!row || !row.address || !row.maker || !row.side) continue;
+    const seconds = num(row.at);
+    if (seconds === null) continue;
+    const atMs = seconds * 1000;
+    if (atMs > now || now - atMs > windowMs) continue;
+    fresh.push({ row, atMs });
+  }
+  const groups = new Map();
+  for (const { row, atMs } of fresh) {
+    const key = `${row.chain}:${row.address}:${row.side}`;
+    const group = groups.get(key) || { chain: row.chain, address: row.address, side: row.side, symbol: row.symbol || '',
+      makers: new Map(), amountUsd: 0, kinds: new Set(), closes: 0, firstAtMs: atMs, lastAtMs: atMs };
+    group.makers.set(row.maker, (group.makers.get(row.maker) || 0) + 1);
+    group.amountUsd += row.amountUsd ?? 0;
+    group.kinds.add(row.kind);
+    if (row.isClose === true) group.closes++;
+    group.firstAtMs = Math.min(group.firstAtMs, atMs);
+    group.lastAtMs = Math.max(group.lastAtMs, atMs);
+    groups.set(key, group);
+  }
+  return [...groups.values()].map(group => {
+    const wallets = group.makers.size;
+    const hasKol = group.kinds.has('kol');
+    const hasSmart = group.kinds.has('smartmoney');
+    // The published strength scale. A cluster of full exits is deliberately not
+    // promoted to the top rung: three wallets selling is a warning, not a buy.
+    const strength = hasSmart && wallets >= 3 ? (hasKol && group.closes === 0 ? 'VERY_STRONG' : 'STRONG')
+      : hasSmart && wallets >= 2 ? 'MEDIUM' : 'WEAK';
+    return {
+      chain: group.chain, address: group.address, side: group.side, symbol: group.symbol,
+      wallets, amountUsd: group.amountUsd, closes: group.closes,
+      smartMoney: hasSmart, kol: hasKol,
+      // Reported in the same unit the API uses, so callers never mix the two.
+      firstAt: Math.floor(group.firstAtMs / 1000), lastAt: Math.floor(group.lastAtMs / 1000),
+      makers: [...group.makers.keys()],
+      strength
+    };
+  }).sort((a, b) => b.wallets - a.wallets || b.amountUsd - a.amountUsd);
 }
 
 export class GmgnClient {
@@ -481,6 +587,27 @@ export class GmgnClient {
     const unique = new Map();
     for (const row of rows) if (!unique.has(row.address)) unique.set(row.address, row);
     return [...unique.values()];
+  }
+
+  // Real-time trades from wallets GMGN has tagged smart money or KOL. `side` is
+  // filtered here rather than server-side because the route accepts it as a
+  // query param only in the CLI's client-side implementation.
+  async trackTrades(kind, chain, { limit = 100, side = null } = {}) {
+    if (!TRACK_KINDS.includes(kind)) return null;
+    const size = Math.min(200, Math.max(1, Number(limit) || 100));
+    const data = await this.request(kind, { query: { chain, limit: size } });
+    const list = Array.isArray(data?.list) ? data.list : Array.isArray(data) ? data : null;
+    if (!list) return null;
+    const rows = [];
+    const natives = new Set((NATIVE_MINTS[chain] ?? []).map(value => value.toLowerCase()));
+    for (const row of list) {
+      const normalized = normalizeTrackRow(row, chain, kind);
+      // The wrapped-native row is a pricing leg, not a token being traded.
+      if (!normalized || natives.has(normalized.address.toLowerCase())) continue;
+      if (side && normalized.side !== side) continue;
+      rows.push(normalized);
+    }
+    return rows;
   }
 }
 

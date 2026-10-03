@@ -8,7 +8,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   GmgnClient, buildTrenchesBody, loadApiKey, normalizeTrenchesRow, unwrap, gmgnBareAddress,
-  gmgnDuration, TRENCHES_PLATFORMS, TRENCHES_QUOTE_ADDRESS_TYPES
+  gmgnDuration, TRENCHES_PLATFORMS, TRENCHES_QUOTE_ADDRESS_TYPES,
+  normalizeTrackRow, clusterTrades, CLUSTER_WINDOW_MS
 } from '../src/gmgn.mjs';
 
 function jsonResponse(body, status = 200, headers = {}) {
@@ -356,3 +357,150 @@ test('pacing waits out the minimum gap rather than firing back to back', async (
   await client.trenches('sol');
   assert.ok(slept.some((ms) => ms >= 1_200), 'the second call waited for the gap');
 });
+
+// ---------------------------------------------------------------------------
+// Wallet tracking (smart money / KOL). These routes are the only curated signal
+// the provider exposes - a firehose cannot say "three proven wallets just bought
+// this" - so the mapping and the convergence rule are pinned here.
+// ---------------------------------------------------------------------------
+
+function trackRow(overrides = {}) {
+  return {
+    transaction_hash: 'sig', maker: 'MakerA', side: 'buy',
+    base_address: 'TokenAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    quote_address: 'So11111111111111111111111111111111111111112',
+    base_token: { symbol: 'TEST', launchpad: 'pump' },
+    amount_usd: 500, token_amount: 1000, price_usd: 0.0005, buy_cost_usd: 0,
+    is_open_or_close: 0, timestamp: 1_791_000_000,
+    maker_info: { twitter_username: 'someone', tags: ['smart_degen'] },
+    ...overrides
+  };
+}
+
+test('a tracked trade is keyed on base_address, never the quote it was priced in', () => {
+  const row = normalizeTrackRow(trackRow(), 'sol', 'smartmoney');
+  assert.equal(row.address, 'TokenAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
+  assert.notEqual(row.address, row.quoteAddress);
+  assert.equal(row.amountUsd, 500);
+  assert.equal(row.symbol, 'TEST');
+  assert.equal(row.launchpad, 'pump');
+  assert.deepEqual(row.tags, ['smart_degen']);
+  assert.equal(row.kind, 'smartmoney');
+});
+
+test('is_open_or_close is inverted from follow-wallet: 0 opens, 1 closes', () => {
+  // Getting this backwards would read every distribution as an accumulation.
+  assert.equal(normalizeTrackRow(trackRow({ is_open_or_close: 0 }), 'sol', 'kol').isClose, false);
+  assert.equal(normalizeTrackRow(trackRow({ is_open_or_close: 1 }), 'sol', 'kol').isClose, true);
+  assert.equal(normalizeTrackRow(trackRow({ is_open_or_close: undefined }), 'sol', 'kol').isClose, null,
+    'an unanswered flag stays unknown rather than defaulting to "opened"');
+});
+
+test('a tracked row without a maker or a subject is dropped rather than guessed', () => {
+  assert.equal(normalizeTrackRow(trackRow({ maker: '' }), 'sol', 'kol'), null);
+  assert.equal(normalizeTrackRow(trackRow({ base_address: '' }), 'sol', 'kol'), null);
+  assert.equal(normalizeTrackRow(null, 'sol', 'kol'), null);
+});
+
+test('the wrapped-native pricing leg is not reported as a traded token', async () => {
+  const client = new GmgnClient({ apiKey: 'k', fetchImpl: async () => ok({ list: [
+    trackRow({ base_address: 'So11111111111111111111111111111111111111112', base_token: { symbol: 'WSOL' }, side: 'sell' }),
+    trackRow({ base_address: 'RealMint1111111111111111111111111111111111', base_token: { symbol: 'REAL' } })
+  ] }) });
+  const rows = await client.trackTrades('smartmoney', 'sol');
+  assert.deepEqual(rows.map((row) => row.symbol), ['REAL']);
+});
+
+test('trackTrades reads the {list} envelope, filters side locally, and clamps the page', async () => {
+  const seen = [];
+  const client = new GmgnClient({ apiKey: 'k', fetchImpl: async (url) => {
+    seen.push(String(url));
+    return ok({ list: [trackRow({ side: 'buy' }), trackRow({ side: 'sell', base_address: 'Other1111' })] });
+  } });
+  const buys = await client.trackTrades('smartmoney', 'sol', { side: 'buy', limit: 999 });
+  assert.equal(buys.length, 1);
+  assert.match(seen[0], /\/v1\/user\/smartmoney/);
+  assert.match(seen[0], /limit=200/, 'the page size is clamped to the documented maximum');
+  assert.equal(await client.trackTrades('follow-wallet', 'sol'), null, 'only the two exist-auth kinds are accepted');
+});
+
+test('a tracking payload with no list is null rather than an empty success', async () => {
+  const client = new GmgnClient({ apiKey: 'k', fetchImpl: async () => ok({ unexpected: true }) });
+  assert.equal(await client.trackTrades('kol', 'sol'), null);
+});
+
+test('a tracking route never throws, even when the transport fails', async () => {
+  const client = new GmgnClient({ apiKey: 'k', fetchImpl: async () => { throw new Error('boom'); } });
+  assert.equal(await client.trackTrades('kol', 'sol'), null);
+  assert.equal(client.snapshot().failed, 1);
+});
+
+function trade(maker, at, overrides = {}) {
+  return { chain: 'sol', address: 'Alpha11111111111111111111111111111111111111', maker, side: 'buy', at,
+    amountUsd: 100, isClose: false, kind: 'smartmoney', symbol: 'ALPHA', ...overrides };
+}
+
+test('convergence counts distinct wallets, not trades', () => {
+  const now = 1_791_000_000_000;
+  const rows = [
+    trade('A', 1_790_999_900), trade('A', 1_790_999_950),
+    trade('B', 1_790_999_960), trade('C', 1_790_999_990)
+  ];
+  const [cluster] = clusterTrades(rows, { now });
+  assert.equal(cluster.wallets, 3, 'one wallet trading twice is still one wallet');
+  assert.equal(cluster.strength, 'STRONG');
+  assert.equal(cluster.amountUsd, 400);
+});
+
+test('trade timestamps are Unix seconds, and the window is compared in milliseconds', () => {
+  // Pinning the unit. Comparing a seconds timestamp against a milliseconds
+  // clock drops every row, and "no convergence found" is indistinguishable from
+  // a genuinely quiet market - the worst possible failure for this feature.
+  const now = 1_791_000_000_000;
+  const [cluster] = clusterTrades([trade('A', 1_790_999_990), trade('B', 1_790_999_990)], { now });
+  assert.equal(cluster.wallets, 2, 'a trade 10 seconds old is inside a 30 minute window');
+  assert.equal(cluster.lastAt, 1_790_999_990, 'reported in the unit the API uses');
+});
+
+test('convergence strength follows the published scale', () => {
+  const now = 1_791_000_000_000;
+  const single = clusterTrades([trade('A', 1_790_999_990)], { now })[0];
+  assert.equal(single.wallets, 1);
+  assert.equal(single.strength, 'WEAK', 'a lone wallet is not a cluster, even a smart-money one');
+  const two = clusterTrades([trade('A', 1_790_999_990), trade('B', 1_790_999_990)], { now })[0];
+  assert.equal(two.strength, 'MEDIUM');
+  const kolOnly = clusterTrades([trade('A', 1_790_999_990, { kind: 'kol', tags: ['kol'] })], { now })[0];
+  assert.equal(kolOnly.strength, 'WEAK', 'one KOL is the documented weakest rung');
+});
+
+test('a cluster that is distributing is never rated as strongly as one that is opening', () => {
+  const now = 1_791_000_000_000;
+  const opening = clusterTrades([trade('A', 1_790_999_990), trade('B', 1_790_999_990),
+    trade('C', 1_790_999_990), trade('D', 1_790_999_990, { kind: 'kol', tags: ['kol'] })], { now })[0];
+  assert.equal(opening.strength, 'VERY_STRONG', 'smart money plus KOL, all opening');
+  const closing = clusterTrades([trade('A', 1_790_999_990, { isClose: true }), trade('B', 1_790_999_990, { isClose: true }),
+    trade('C', 1_790_999_990, { isClose: true }), trade('D', 1_790_999_990, { kind: 'kol', isClose: true })], { now })[0];
+  assert.equal(closing.strength, 'STRONG', 'a cluster of full exits is not promoted');
+  assert.equal(closing.closes, 4);
+});
+
+test('the two sides are separate clusters and stale trades fall out of the window', () => {
+  const now = 1_791_000_000_000;
+  const rows = [
+    trade('A', 1_790_999_990), trade('B', 1_790_999_990),
+    trade('C', 1_790_999_990, { side: 'sell' }),
+    // Older than the 30 minute window.
+    trade('D', Math.floor((now - CLUSTER_WINDOW_MS) / 1000) - 60)
+  ];
+  const clusters = clusterTrades(rows, { now });
+  assert.equal(clusters.length, 2, 'buy and sell are not merged');
+  assert.equal(clusters.find((c) => c.side === 'sell').wallets, 1);
+  assert.equal(clusters.reduce((sum, c) => sum + c.wallets, 0), 3, 'the stale trade is excluded');
+});
+
+test('a future timestamp cannot be counted as a live cluster', () => {
+  const now = 1_791_000_000_000;
+  const rows = [trade('A', Math.floor(now / 1000) + 600), trade('B', Math.floor(now / 1000) + 600)];
+  assert.deepEqual(clusterTrades(rows, { now }), []);
+});
+
