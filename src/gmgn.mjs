@@ -1,0 +1,487 @@
+// A direct HTTP client for GMGN's OpenAPI.
+//
+// Why this talks to the API instead of shelling out to gmgn-cli:
+//   1. gmgn-cli pays a ~3.7 s node process spawn per call. The trenches feed is a
+//      fixed 60-item newest-first window (the CLI's --limit is ignored server
+//      side) covering only ~100-140 s of Solana creations, so the poll cadence
+//      that avoids gaps is itself around 100 s. Spending 3.7 s of a 100 s budget
+//      on process startup is waste, and it makes precise pacing impossible.
+//   2. Market routes use "exist" auth: an X-APIKEY header plus `timestamp` and
+//      `client_id` query params. No private-key signature is involved - that is
+//      only for swap/order routes - so Node's built-in fetch and
+//      crypto.randomUUID are sufficient. The project keeps its zero
+//      runtime-dependency rule.
+//   3. This module deliberately never reads GMGN_PRIVATE_KEY. A read-only radar
+//      has no business holding a signing key; only the API key is loaded.
+//
+// Measured behaviour it is built around (see .workbuddy/GMGN数据源评估.md):
+//   - Envelope is { code, data, message, error }; success is code === 0.
+//   - Throttling escalates to an IP ban: RATE_LIMIT_BANNED, starting at 5 s and
+//     extendable to 5 minutes, so pacing and backoff are correctness features
+//     rather than politeness. The reset moment arrives either in the
+//     `x-ratelimit-reset` header (Unix seconds) or as `reset_at` in the body.
+//   - Client-side bucket is the documented one: rate 20/s, capacity 20, and each
+//     route costs its own weight (trenches 3, trending 1, signal 3).
+//   - Limit is ignored server-side: trenches always answers 60 rows per category.
+
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+const HOST = 'https://openapi.gmgn.ai';
+const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
+const RATE_LIMIT_CODES = new Set(['RATE_LIMIT_EXCEEDED', 'RATE_LIMIT_BANNED']);
+// Upper bound on how long a single request will queue behind the client's own
+// pacing before the client gives up and reports PACING_OVERFLOW.
+const PACING_BUDGET_MS = 30_000;
+
+export const GMGN_ROUTES = Object.freeze({
+  trenches: Object.freeze({ method: 'POST', path: '/v1/trenches', weight: 3 }),
+  trending: Object.freeze({ method: 'GET', path: '/v1/market/rank', weight: 1 }),
+  signal: Object.freeze({ method: 'POST', path: '/v1/market/token_signal', weight: 3 })
+});
+
+export const TRENCHES_TYPES = Object.freeze(['new_creation', 'near_completion', 'completed']);
+
+// These two maps mirror the allow-list the CLI sends. They are data, not policy:
+// an empty array filters every result out, so an unknown chain must omit the
+// field entirely and let the API apply its own default rather than send [].
+export const TRENCHES_PLATFORMS = Object.freeze({
+  sol: Object.freeze([
+    'Pump.fun', 'pump_mayhem', 'pump_mayhem_agent', 'pump_agent',
+    'letsbonk', 'bonkers', 'bags', 'memoo', 'liquid', 'bankr', 'zora',
+    'surge', 'anoncoin', 'moonshot_app', 'wendotdev', 'heaven', 'sugar',
+    'token_mill', 'believe', 'trendsfun', 'trends_fun', 'jup_studio',
+    'Moonshot', 'boop', 'ray_launchpad', 'meteora_virtual_curve', 'xstocks'
+  ]),
+  bsc: Object.freeze([
+    'fourmeme', 'fourmeme_agent', 'bn_fourmeme', 'four_xmode_agent',
+    'cubepeg', 'likwid', 'goplus_creator', 'goplus_skills', 'openfour',
+    'flap', 'flap_stocks', 'flap_aioracle', 'clanker', 'lunafun'
+  ])
+});
+
+export const TRENCHES_QUOTE_ADDRESS_TYPES = Object.freeze({
+  sol: Object.freeze([4, 5, 3, 1, 13, 0]),
+  bsc: Object.freeze([6, 7, 1, 16, 8, 3, 9, 10, 2, 17, 18, 0])
+});
+
+// The API's duration filters are typed `string` on the wire, not numbers. Sending
+// a number is rejected outright with `filter_invalid`, which arrives as HTTP 200
+// with `code: -1` and an empty payload for every category - i.e. it looks exactly
+// like "the source has no data", which is the one failure mode this project
+// cannot afford to misread. So the coercion lives here, in the request builder,
+// where no caller can forget it.
+//
+// This project counts token ages in seconds everywhere (config.minAgeSec), so a
+// bare number means seconds. The gmgn-cli accepts a bare number as *minutes*;
+// that disagreement is precisely the silent off-by-60 this function removes.
+export const DURATION_FILTERS = Object.freeze(new Set(['min_created', 'max_created']));
+
+const DURATION_PATTERN = /^(\d+(?:\.\d+)?)([smhd])?$/;
+
+export function gmgnDuration(value) {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value <= 0) throw new TypeError(`invalid duration: ${value}`);
+    return `${value}s`;
+  }
+  const match = String(value ?? '').trim().match(DURATION_PATTERN);
+  if (!match) throw new TypeError(`invalid duration: ${JSON.stringify(value)}`);
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) throw new TypeError(`invalid duration: ${JSON.stringify(value)}`);
+  switch (match[2] ?? 's') {
+    case 's': return `${amount}s`;
+    case 'm': return `${amount}m`;
+    // The API documents m/h/d, but only s and m are known to survive the raw
+    // upstream path; converting is safer than sending a unit it may reject.
+    case 'h': return `${amount * 60}m`;
+    default: return `${amount * 1440}m`;
+  }
+}
+
+const num = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+// Rates arrive as 0..1 numbers, but 0 is a real reading, so it must survive.
+const rate = (value) => {
+  const parsed = num(value);
+  return parsed !== null && parsed >= 0 && parsed <= 1 ? parsed : null;
+};
+
+// Several safety fields arrive as the strings "1"/"0" rather than booleans.
+const flag = (value) => {
+  if (value === true || value === 1 || value === '1') return true;
+  if (value === false || value === 0 || value === '0') return false;
+  return null;
+};
+
+const text = (value, max = 120) => {
+  const out = String(value ?? '').trim();
+  return out ? out.slice(0, max) : null;
+};
+
+// GMGN nests a token's identity as `<address>-<chain>` in some payloads and as a
+// bare address in others; both forms appear in the wild.
+export function gmgnBareAddress(chain, value) {
+  const suffix = chain === 'sol' ? '-solana' : '-' + chain;
+  const raw = String(value ?? '').trim();
+  return raw.endsWith(suffix) ? raw.slice(0, -suffix.length) : raw;
+}
+
+// Read the API key without ever touching the signing key. Env wins so a caller
+// can override; otherwise fall back to the file the CLI itself uses.
+export function loadApiKey({ env = process.env, home = os.homedir(), readFile = fs.readFileSync } = {}) {
+  const fromEnv = String(env.GMGN_API_KEY ?? '').trim();
+  if (fromEnv) return fromEnv;
+  try {
+    const file = path.join(home, '.config', 'gmgn', '.env');
+    for (const line of String(readFile(file, 'utf8')).split(/\r?\n/)) {
+      const match = line.match(/^\s*(?:export\s+)?GMGN_API_KEY\s*=\s*(.*)$/);
+      if (!match) continue;
+      const value = match[1].trim().replace(/^["']|["']$/g, '');
+      if (value) return value;
+    }
+  } catch { /* A missing file simply means the provider stays disabled. */ }
+  return '';
+}
+
+// The CLI sends filters flat inside each category section, alongside the
+// allow-lists. Kept as a pure builder so the exact request is unit-testable.
+// Throws on a malformed duration: a gate that cannot be expressed must stop the
+// request rather than be dropped, because dropping it silently widens discovery.
+export function buildTrenchesBody({ chain, types = TRENCHES_TYPES, filters = {}, platforms = null, limit = 80 } = {}) {
+  const selected = Array.isArray(types) && types.length ? types : TRENCHES_TYPES;
+  const allow = Array.isArray(platforms) && platforms.length ? platforms : (TRENCHES_PLATFORMS[chain] ?? []);
+  const quoteTypes = TRENCHES_QUOTE_ADDRESS_TYPES[chain] ?? [];
+  const shaped = {};
+  for (const [key, value] of Object.entries(filters ?? {})) {
+    shaped[key] = DURATION_FILTERS.has(key) ? gmgnDuration(value) : value;
+  }
+  const body = { version: 'v2' };
+  for (const type of selected) {
+    const section = {
+      filters: ['offchain', 'onchain'],
+      launchpad_platform_v2: true,
+      limit: Math.min(80, Math.max(1, Number(limit) || 80)),
+      ...shaped
+    };
+    if (allow.length) section.launchpad_platform = [...allow];
+    if (quoteTypes.length) section.quote_address_type = [...quoteTypes];
+    body[type] = section;
+  }
+  return body;
+}
+
+// The CLI prints `data`, which is sometimes itself another envelope; peel until
+// a non-envelope object remains. A missing `code` means we are already inside.
+export function unwrap(payload) {
+  let node = payload;
+  for (let depth = 0; depth < 3; depth++) {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return node;
+    if (node.code === undefined || node.data === undefined) return node;
+    node = node.data;
+  }
+  return node;
+}
+
+// One trenches row -> the neutral shape this project reasons about. Everything
+// that is missing stays null: a provider that does not answer a question must
+// never be allowed to imply an answer.
+export function normalizeTrenchesRow(row, chain, at) {
+  if (!row || typeof row !== 'object') return null;
+  const address = gmgnBareAddress(chain, row.address);
+  if (!address) return null;
+  return {
+    provider: 'GMGN',
+    chain,
+    address,
+    symbol: text(row.symbol, 30),
+    name: text(row.name ?? row.trans_symbol_zhcn, 80),
+    price: num(row.price),
+    // market_cap / liquidity here are the pool-scoped figures the calibration run
+    // confirmed match DexScreener to ~0.1%, unlike AVE's inflated pool TVL.
+    marketCap: num(row.market_cap ?? row.usd_market_cap),
+    liquidity: num(row.liquidity),
+    holders: num(row.holder_count),
+    volume24h: num(row.volume_24h),
+    swaps24h: num(row.swaps_24h),
+    buys24h: num(row.buys_24h),
+    sells24h: num(row.sells_24h),
+    netBuy24h: num(row.net_buy_24h),
+    top10Rate: rate(row.top_10_holder_rate),
+    devHoldRate: rate(row.dev_team_hold_rate),
+    sniperHoldRate: rate(row.top70_sniper_hold_rate),
+    insiderHoldRate: rate(row.suspected_insider_hold_rate),
+    freshWalletRate: rate(row.fresh_wallet_rate),
+    privateVaultRate: rate(row.private_vault_hold_rate),
+    creatorHoldRate: rate(row.creator_balance_rate),
+    // These four are exactly what discoveryScreen's non-AVE branch wants and what
+    // AVE reports as a hard null. is_honeypot is not in this payload; it lives on
+    // the per-token security route and is fetched only when a lead warrants it.
+    rugRatio: rate(row.rug_ratio),
+    washTrading: flag(row.is_wash_trading),
+    ratTraderRate: rate(row.rat_trader_amount_rate),
+    bundlerRate: rate(row.bundler_trader_amount_rate),
+    entrapmentRate: rate(row.entrapment_ratio),
+    botDegenRate: rate(row.bot_degen_rate),
+    smartMoneyCount: num(row.smart_degen_count),
+    renownedCount: num(row.renowned_count),
+    botDegenCount: num(row.bot_degen_count),
+    renouncedMint: flag(row.renounced_mint),
+    renouncedFreeze: flag(row.renounced_freeze_account),
+    burnStatus: text(row.burn_status, 24),
+    buyTax: rate(row.buy_tax),
+    sellTax: rate(row.sell_tax),
+    createdAt: num(row.created_timestamp) ?? num(row.open_timestamp),
+    openAt: num(row.open_timestamp),
+    progress: rate(row.progress),
+    launchpad: text(row.launchpad, 40),
+    launchpadStatus: num(row.launchpad_status),
+    poolAddress: text(row.pool_address, 80),
+    exchange: text(row.exchange, 60),
+    creatorCreatedCount: num(row.creator_created_count),
+    creatorTokenStatus: text(row.creator_token_status, 40),
+    twitter: text(row.twitter, 120),
+    website: text(row.website, 200),
+    telegram: text(row.telegram, 120),
+    observedAt: at
+  };
+}
+
+export class GmgnClient {
+  constructor({
+    apiKey = '',
+    fetchImpl = globalThis.fetch,
+    now = () => Date.now(),
+    sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    host = HOST,
+    timeoutMs = 15_000,
+    maxResponseBytes = DEFAULT_MAX_BYTES,
+    // Documented leaky bucket. Kept as a client-side guard so we never rely on
+    // the server to police us into a ban.
+    ratePerSecond = 20,
+    capacity = 20,
+    // A defensive floor on top of the bucket: the ban we actually observed came
+    // with no prior 429s we could attribute, so spacing is treated as insurance.
+    minGapMs = 1_200,
+    banStrikesBeforeLongCooldown = 2,
+    strikeCooldownMs = 5 * 60_000
+  } = {}) {
+    if (typeof fetchImpl !== 'function') throw new TypeError('fetch implementation is required');
+    this.apiKey = String(apiKey || '').trim();
+    this.fetchImpl = fetchImpl;
+    this.now = now;
+    this.sleep = sleep;
+    this.host = String(host).replace(/\/$/, '');
+    this.timeoutMs = Math.max(1_000, Number(timeoutMs) || 15_000);
+    this.maxResponseBytes = Math.max(1_024, Number(maxResponseBytes) || DEFAULT_MAX_BYTES);
+    this.ratePerSecond = Math.max(1, Number(ratePerSecond) || 20);
+    this.capacity = Math.max(1, Number(capacity) || 20);
+    this.minGapMs = Math.max(0, Number(minGapMs) || 0);
+    this.banStrikesBeforeLongCooldown = Math.max(1, Number(banStrikesBeforeLongCooldown) || 2);
+    this.strikeCooldownMs = Math.max(1_000, Number(strikeCooldownMs) || 5 * 60_000);
+    this.tokens = this.capacity;
+    this.bucketAt = this.now();
+    this.lastRequestAt = 0;
+    this.retryAt = 0;
+    this.strikes = 0;
+    this.health = { requests: 0, ok: 0, failed: 0, throttled: 0, banned: 0, lastErrorCode: '', lastErrorDetail: '', lastRequestAt: 0, lastOkAt: 0 };
+  }
+
+  get enabled() {
+    return Boolean(this.apiKey);
+  }
+
+  cooling() {
+    return this.retryAt > this.now();
+  }
+
+  snapshot() {
+    const at = this.now();
+    return {
+      ...this.health,
+      enabled: this.enabled,
+      retryAt: this.retryAt,
+      cooling: this.retryAt > at,
+      strikes: this.strikes,
+      tokens: Number(this.tokens.toFixed(2)),
+      capacity: this.capacity,
+      nextAllowedAt: Math.max(this.retryAt, this.lastRequestAt + this.minGapMs)
+    };
+  }
+
+  // Refill lazily on read so the bucket never drifts while idle.
+  #refill(at) {
+    const elapsed = Math.max(0, at - this.bucketAt);
+    this.tokens = Math.min(this.capacity, this.tokens + (elapsed * this.ratePerSecond) / 1000);
+    this.bucketAt = at;
+  }
+
+  async #awaitSlot(cost) {
+    // The pause is computed from the injected clock, so the budget has to be on
+    // the *total* time spent waiting rather than on a single pause: a clock that
+    // does not advance (a frozen clock under test, or a system clock that steps
+    // backwards) would recompute an identical wait forever, and a per-pause
+    // ceiling would never trip.
+    let waited = 0;
+    for (;;) {
+      const at = this.now();
+      this.#refill(at);
+      const gapLeft = this.lastRequestAt + this.minGapMs - at;
+      if (this.tokens >= cost && gapLeft <= 0) {
+        this.tokens -= cost;
+        return true;
+      }
+      const needTokens = this.tokens >= cost ? 0 : ((cost - this.tokens) / this.ratePerSecond) * 1000;
+      const pause = Math.max(50, gapLeft, needTokens);
+      if (waited + pause > PACING_BUDGET_MS) return false;
+      waited += pause;
+      await this.sleep(pause);
+    }
+  }
+
+  // Reads `reset_at` from the body or `x-ratelimit-reset` from the headers, both
+  // Unix seconds. Returns 0 when the server declined to say when it clears.
+  #resetAt(response, payload) {
+    const fromBody = num(payload?.reset_at);
+    if (fromBody && fromBody > 0) return fromBody * 1000;
+    const header = response?.headers?.get?.('x-ratelimit-reset');
+    const parsed = Number.parseInt(header ?? '', 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed * 1000 : 0;
+  }
+
+  // Never throws. Returns the unwrapped `data` or null, with the reason recorded
+  // in health so a silent null can always be explained after the fact.
+  async request(routeName, { query = {}, body = null } = {}) {
+    const route = GMGN_ROUTES[routeName];
+    if (!route) return null;
+    if (!this.enabled) {
+      this.health.lastErrorCode = 'NO_API_KEY';
+      return null;
+    }
+    const at = this.now();
+    if (this.retryAt > at) {
+      this.health.lastErrorCode = 'COOLING';
+      return null;
+    }
+
+    const granted = await this.#awaitSlot(route.weight);
+    if (!granted) {
+      this.health.lastErrorCode = 'PACING_OVERFLOW';
+      return null;
+    }
+
+    const url = new URL(this.host + route.path);
+    for (const [key, value] of Object.entries(query)) {
+      if (Array.isArray(value)) for (const item of value) url.searchParams.append(key, String(item));
+      else if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
+    }
+    url.searchParams.set('timestamp', String(Math.floor(this.now() / 1000)));
+    url.searchParams.set('client_id', crypto.randomUUID());
+
+    this.lastRequestAt = this.now();
+    this.health.requests++;
+    this.health.lastRequestAt = this.lastRequestAt;
+
+    let response;
+    try {
+      response = await this.fetchImpl(url.toString(), {
+        method: route.method,
+        headers: {
+          'X-APIKEY': this.apiKey,
+          accept: 'application/json',
+          ...(body === null ? {} : { 'content-type': 'application/json' })
+        },
+        ...(body === null ? {} : { body: JSON.stringify(body) }),
+        signal: AbortSignal.timeout(this.timeoutMs)
+      });
+    } catch (error) {
+      this.health.failed++;
+      this.health.lastErrorCode = String(error?.name || error?.code || 'FETCH_FAILED');
+      return null;
+    }
+
+    let payload = null;
+    try {
+      const raw = await response.text();
+      if (raw.length > this.maxResponseBytes) {
+        this.health.failed++;
+        this.health.lastErrorCode = 'RESPONSE_TOO_LARGE';
+        return null;
+      }
+      payload = JSON.parse(raw);
+    } catch {
+      this.health.failed++;
+      this.health.lastErrorCode = 'INVALID_JSON';
+      return null;
+    }
+
+    if (payload?.code !== 0) {
+      const apiError = String(payload?.error || '');
+      const resetAt = this.#resetAt(response, payload);
+      if (RATE_LIMIT_CODES.has(apiError) || response.status === 429) {
+        this.strikes++;
+        if (apiError === 'RATE_LIMIT_BANNED') this.health.banned++;
+        else this.health.throttled++;
+        const backoff = this.strikes >= this.banStrikesBeforeLongCooldown
+          ? Math.max(resetAt - this.now(), this.strikeCooldownMs)
+          : Math.max(resetAt - this.now(), 5_000);
+        // A little headroom past the server's own deadline; retrying exactly on
+        // the boundary has been observed to extend the ban.
+        this.retryAt = this.now() + Math.min(backoff + 1_000, this.strikeCooldownMs);
+        this.health.lastErrorCode = apiError || 'HTTP_429';
+        return null;
+      }
+      this.health.failed++;
+      this.health.lastErrorCode = apiError || String(payload?.code ?? 'API_ERROR');
+      return null;
+    }
+
+    this.strikes = 0;
+    this.health.ok++;
+    this.health.lastOkAt = this.now();
+    this.health.lastErrorCode = '';
+    this.health.lastErrorDetail = '';
+    return unwrap(payload);
+  }
+
+  // Newly created / nearly complete / graduated launchpad tokens. The server
+  // applies the filters, so this is a discovery query, not a raw firehose.
+  async trenches(chain, { types = TRENCHES_TYPES, filters = {}, platforms = null, limit = 80 } = {}) {
+    // A malformed gate is a programming error, but this client's contract is that
+    // it never throws, so it is converted into an explained null: fail closed,
+    // spend nothing, and leave a reason in health.
+    let body;
+    try {
+      body = buildTrenchesBody({ chain, types, filters, platforms, limit });
+    } catch (error) {
+      this.health.failed++;
+      this.health.lastErrorCode = 'FILTER_INVALID';
+      this.health.lastErrorDetail = String(error?.message || error);
+      return null;
+    }
+    const data = await this.request('trenches', { query: { chain }, body });
+    if (!data || typeof data !== 'object') return null;
+    const at = this.now();
+    const rows = [];
+    for (const type of Object.keys(body)) {
+      const bucket = data[type];
+      if (!Array.isArray(bucket)) continue;
+      for (const row of bucket) {
+        const normalized = normalizeTrenchesRow(row, chain, at);
+        if (normalized) rows.push({ ...normalized, bucket: type });
+      }
+    }
+    // The feed repeats the same token across categories as it progresses, so a
+    // caller that concatenates must dedupe by address.
+    const unique = new Map();
+    for (const row of rows) if (!unique.has(row.address)) unique.set(row.address, row);
+    return [...unique.values()];
+  }
+}
+
+export { HOST as GMGN_HOST };
