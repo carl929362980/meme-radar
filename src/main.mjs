@@ -11,6 +11,7 @@ import { GoPlusReader } from './goplus.mjs';
 import { createServer, toPublicStatus } from './server.mjs';
 import { RadarControls } from './local-store.mjs';
 import { LiveDiscovery } from './live-discovery.mjs';
+import { createGmgnDiscovery } from './gmgn-discovery.mjs';
 import { configureWindowsSystemProxy } from './windows-proxy.mjs';
 
 // Windows portable supervisor bridge: keep the packaged EXE launcher intact.
@@ -77,6 +78,12 @@ scanner = new Scanner({ provider: market,
   state, controls, sharedRequestIntervalMs
 });
 const liveDiscovery = new LiveDiscovery({ provider: market, cacheOnly: true, marketOverlay: new DexBatchMarketOverlay() });
+// The signal channel runs beside the AVE pipeline rather than inside it. The two
+// sources disagree on scale - on the same pool their liquidity readings differ by
+// up to 5x - so letting these rows ride the AVE pipeline under AVE's field names
+// would have the change-rate maths quietly comparing two different rulers.
+// It builds only when a key is present, so a stock install is unchanged.
+const signals = createGmgnDiscovery({ settings: config, chains: config.supportedChains });
 const version = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
 
 if (once) {
@@ -90,6 +97,7 @@ const server = createServer({
   state,
   controls,
   liveDiscovery,
+  signals,
   enqueueReview: (chain, row) => scanner.enqueueReview(chain, row),
   settings: { ...config, version },
   supportedChains: config.supportedChains,
@@ -112,10 +120,11 @@ console.log('只读扫描器：交易执行永久关闭');
 let closing = false;
 function shutdown() {
   if (closing) return;
-  closing = true; scanner.stop(); liveDiscovery.stop();
+  closing = true; scanner.stop(); liveDiscovery.stop(); signals?.stop();
   market.resetCredentials({ disabled: true });
   server.close(() => process.exit(0));
   server.closeIdleConnections();
 }
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => shutdown());
 await scanner.start();
+signals?.start();

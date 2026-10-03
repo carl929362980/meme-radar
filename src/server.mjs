@@ -261,6 +261,50 @@ function publicLiveSnapshot(source = {}, chain) {
   return output;
 }
 
+// The signal projection is a whitelist rather than a passthrough: every field is
+// named here, so a later engine change cannot leak an internal value - or a
+// provider identity - into the page merely by adding a key to its snapshot.
+function publicSignalSnapshot(source = {}, chain) {
+  const addressValid = address => typeof address === 'string'
+    && (chain === 'sol' ? /^[1-9A-HJ-NP-Za-km-z]{32,44}$/ : /^0x[0-9a-f]{40}$/i).test(address);
+  const statuses = new Set(['WAITING', 'LOADING', 'READY', 'PAUSED', 'AUTH_REQUIRED', 'ERROR']);
+  const kinds = new Set(['NEW_POOL', 'ENTRY', 'EXIT']);
+  const strengths = new Set(['MEDIUM', 'STRONG', 'VERY_STRONG']);
+  const activities = new Set(['SMART', 'KOL', 'BOTH']);
+  const reasons = new Set(['FIRST_SIGHTING', 'CLUSTER_ENTRY', 'CLUSTER_EXIT_FULL', 'CLUSTER_EXIT_PART']);
+  const reading = value => ({ marketCap: finiteOrNull(value?.marketCap), liquidity: finiteOrNull(value?.liquidity),
+    holders: finiteOrNull(value?.holders), progress: finiteOrNull(value?.progress), at: finite(value?.at) });
+  const signals = (Array.isArray(source.signals) ? source.signals : []).slice(0, 100)
+    .filter(signal => signal && addressValid(signal.address) && kinds.has(signal.kind))
+    .map(signal => ({
+      id: text(signal.id, 40), kind: signal.kind, reason: reasons.has(signal.reason) ? signal.reason : null,
+      chain, address: signal.address, symbol: publicMessage(signal.symbol, '?', 30), name: publicMessage(signal.name, '', 80),
+      at: finite(signal.at), strength: strengths.has(signal.strength) ? signal.strength : null,
+      wallets: finiteOrNull(signal.wallets), amountUsd: finiteOrNull(signal.amountUsd), closes: finiteOrNull(signal.closes),
+      kol: signal.kol === true, smartMoney: signal.smartMoney === true,
+      activity: activities.has(signal.activity) ? signal.activity : null,
+      marketCap: finiteOrNull(signal.marketCap), liquidity: finiteOrNull(signal.liquidity),
+      holders: finiteOrNull(signal.holders), progress: finiteOrNull(signal.progress),
+      firstSeenAt: finiteOrNull(signal.firstSeenAt), firstMarketCap: finiteOrNull(signal.firstMarketCap),
+      firstLiquidity: finiteOrNull(signal.firstLiquidity), createdAt: finiteOrNull(signal.createdAt)
+    }));
+  const pools = (Array.isArray(source.pools) ? source.pools : []).slice(0, 100)
+    .filter(pool => pool && addressValid(pool.address))
+    .map(pool => ({ address: pool.address, symbol: publicMessage(pool.symbol, '?', 30), name: publicMessage(pool.name, '', 80),
+      firstSeenAt: finite(pool.firstSeenAt), first: reading(pool.first), latest: reading(pool.latest) }));
+  return {
+    chain,
+    status: statuses.has(source.status) ? source.status : 'WAITING',
+    code: text(source.code, 40) || null,
+    enabled: source.enabled === true, execution: false, stale: source.stale !== false,
+    ...Object.fromEntries(['intervalMs', 'tradeIntervalMs', 'lastAttemptAt', 'lastSuccessAt', 'pollCount', 'poolCount', 'tradeCount']
+      .map(key => [key, finite(source[key])])),
+    nextPollAt: finiteOrNull(source.nextPollAt),
+    counts: { newPool: finite(source.counts?.newPool), entry: finite(source.counts?.entry), exit: finite(source.counts?.exit) },
+    pools, signals
+  };
+}
+
 function publicCandidate(row = {}) {
   const earlyExit = row.auditHealth?.earlyExit === true;
   const deep = row.deep || {};
@@ -985,7 +1029,7 @@ function publicUpdate(source = {}) {
 }
 
 export function createServer({ state, settings, controls, switchChain,
-  liveDiscovery, enqueueReview, ave, getAveConnection, getMarketStatus, getSchedulerStatus, updater, onUpdateReady, supportedChains = [] }) {
+  liveDiscovery, signals, enqueueReview, ave, getAveConnection, getMarketStatus, getSchedulerStatus, updater, onUpdateReady, supportedChains = [] }) {
   const publicChains = allowedChainIds(supportedChains);
   const dashboard = path.join(settings.publicDir, 'index.html');
   const dashboardHtml = fs.readFileSync(dashboard, 'utf8');
@@ -1066,6 +1110,24 @@ export function createServer({ state, settings, controls, switchChain,
       } finally {
         req.removeListener('aborted', abort);
         res.removeListener('close', responseClosed);
+      }
+    }
+
+    // The signal channel is deliberately a separate endpoint from the AVE live
+    // snapshot: the two are different measurements of the same market and must
+    // never be rendered as one list. A local origin is still required because
+    // this is a read of the user's own configured credentials' output.
+    if (req.method === 'POST' && url.pathname === '/api/signals') {
+      if (!req.headers.origin) return sendJson(res, 403, { error: 'local_request_required' }, csp);
+      if (!signals) return sendJson(res, 503, { error: 'signals_unavailable' }, csp);
+      try {
+        const body = await readSmallJson(req, 512);
+        if (!body || typeof body !== 'object' || Array.isArray(body)
+          || Object.keys(body).sort().join(',') !== 'chain'
+          || !publicChains.has(body.chain)) return sendJson(res, 400, { error: 'invalid_signals_request' }, csp);
+        return sendJson(res, 200, publicSignalSnapshot(readSnapshot(() => signals.snapshot(body.chain)) || {}, body.chain), csp);
+      } catch (error) {
+        return sendJson(res, [400, 413, 415].includes(error?.statusCode) ? error.statusCode : 500, { error: 'signals_request_failed' }, csp);
       }
     }
 

@@ -609,6 +609,21 @@
     .live-evidence { padding: 9px 0; border-top: 1px solid #29404a; color: #d9bd80; font-size: 14px; }
     .live-card .addr { overflow-wrap: anywhere; }
     .live-grid .empty { grid-column: 1 / -1; }
+    /* The signal stream leads the page: it is the only panel whose rows are
+       statements about wallets rather than about a market. Every card carries the
+       wallets, the money and the pool anchor together, so a signal can be judged
+       on the page instead of on trust. Entry is warm and exit is cool, following
+       the local convention that a rise is red and a fall is green. */
+    .signal-card { border: 1px solid #2d424c; border-left-width: 4px; border-radius: 10px; padding: 14px; background: #101b22; min-width: 0; }
+    .signal-card.signal-entry { border-left-color: #d9553a; }
+    .signal-card.signal-exit { border-left-color: #35a06a; }
+    .signal-card.signal-new { border-left-color: #668ba2; }
+    .signal-card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .signal-card-head strong { font-size: 20px; overflow-wrap: anywhere; }
+    .signal-reason { margin: 10px 0 6px; font-size: 16px; color: #e8eef2; }
+    .signal-reason b { font-size: 16px; }
+    .signal-anchor { color: #a6babf; font-size: 14px; }
+    .signal-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
     /* Tracking board. Every row states the first sighting, the latest
        observation and the change between them, so a signal can always be
        checked against its baseline instead of being taken on trust. */
@@ -759,6 +774,15 @@
       </div>
     </section>
 
+
+    <section id="signalPanel" class="panel" aria-labelledby="signalTitle">
+      <div class="live-heading">
+        <div><h2 id="signalTitle" data-i18n="signalTitle">聪明钱共振</h2><small data-i18n="signalDisclaimer">首见锚点 · 多钱包同向 · 含退出预警</small></div>
+        <span id="signalState" role="status" aria-live="polite" class="live-tag"></span>
+      </div>
+      <div id="signalMeta" class="live-meta"></div>
+      <div id="signalRows" class="live-grid"><div class="empty" data-i18n="signalEmpty">正在累积聪明钱成交，暂无共振信号</div></div>
+    </section>
 
     <section id="livePanel" class="panel live-panel" aria-labelledby="liveTitle">
       <div class="live-heading">
@@ -981,6 +1005,30 @@
       liveCap: ['市值','市值','Market cap','時価総額','시가총액','القيمة السوقية'],
       trackTitle: ['追踪中','追蹤中','Tracking','追跡','추적 중','قيد التتبع'],
       trackDisclaimer: ['首见对比 · 变化即信号','首見對比 · 變化即訊號','First-sighting comparison · the change is the signal','初回観測との比較 · 変化がシグナル','최초 관측 대비 · 변화가 신호','مقارنة بأول رصد · التغير هو الإشارة'],
+      signalTitle: ['聪明钱共振','聰明錢共振','Smart-money convergence','スマートマネー共振','스마트머니 공명','تقارب الأموال الذكية'],
+      signalDisclaimer: ['首见锚点 · 多钱包同向 · 含退出预警','首見錨點 · 多錢包同向 · 含退出預警','First-sighting anchor · several wallets one way · exits included','初回アンカー・複数ウォレット同方向・出口警戒あり','최초 관측 앵커 · 다중 지갑 동방향 · 이탈 경보 포함','مرساة أول رصد · عدة محافظ باتجاه واحد · مع تنبيه الخروج'],
+      signalEmpty: ['正在累积聪明钱成交，暂无共振信号','正在累積聰明錢成交，暫無共振訊號','Accumulating smart-money trades; no convergence yet','スマートマネーの約定を蓄積中。共鳴シグナルはまだありません','스마트머니 체결 누적 중 · 아직 공명 신호 없음','يجري تجميع صفقات الأموال الذكية؛ لا تقارب بعد'],
+      signalBrief: ['{n} 条信号 · 采样 {time}','{n} 條訊號 · 採樣 {time}','{n} signals · sampled {time}','{n}件 · 取得 {time}','{n}개 신호 · 수집 {time}','{n} إشارة · التقطت {time}'],
+      signalKindNew: ['新池首见','新池首見','New pool','新規プール','신규 풀','مجمّع جديد'],
+      signalKindEntry: ['共振买入','共振買入','Convergence buy','共鳴買い','공명 매수','شراء متقارب'],
+      signalKindExit: ['共振卖出','共振賣出','Convergence sell','共鳴売り','공명 매도','بيع متقارب'],
+      signalWalletCount: ['{n} 个钱包同向','{n} 個錢包同向','{n} wallets on one side','{n}個のウォレットが同方向','{n}개 지갑 동방향','{n} محافظ بنفس الاتجاه'],
+      signalAvgAmount: ['平均 {amount}','平均 {amount}','Avg {amount}','平均 {amount}','평균 {amount}','المتوسط {amount}'],
+      signalActivitySmart: ['聪明钱','聰明錢','Smart money','スマートマネー','스마트머니','أموال ذكية'],
+      signalActivityKol: ['KOL','KOL','KOL','KOL','KOL','KOL'],
+      signalActivityBoth: ['聪明钱+KOL','聰明錢+KOL','Smart money + KOL','スマートマネー＋KOL','스마트머니+KOL','أموال ذكية + KOL'],
+      signalAnchor: ['首见 {first} → 现 {now}','首見 {first} → 現 {now}','first {first} → now {now}','初回 {first} → 現在 {now}','최초 {first} → 현재 {now}','أول {first} → الآن {now}'],
+      signalExitFull: ['含全仓平仓','含全倉平倉','includes full closes','全量クローズを含む','전량 청산 포함','يتضمن إغلاقًا كاملًا'],
+      signalExitPart: ['含部分减仓','含部分減倉','includes partial reductions','一部縮小を含む','일부 축소 포함','يتضمن تخفيضًا جزئيًا'],
+      signalStrengthMedium: ['中等','中等','Medium','中','중간','متوسط'],
+      signalStrengthStrong: ['强','強','Strong','強','강','قوي'],
+      signalStrengthVeryStrong: ['很强','很強','Very strong','非常に強い','매우 강','قوي جدًا'],
+      signalCrossed: ['池子已在发现流','池子已在發現流','pool also in discovery','プールも発見済み','풀도 발견 흐름에 있음','المجمّع أيضًا في الاكتشاف'],
+      signalStateReady: ['运行中','運作中','Running','稼働中','실행 중','قيد التشغيل'],
+      signalStateWaiting: ['等待数据','等待資料','Waiting for data','データ待ち','데이터 대기','في انتظار البيانات'],
+      signalStatePaused: ['已限频暂停','已限頻暫停','Paused by rate limit','レート制限で停止','레이트리밋 일시정지','موقوف بسبب حد المعدل'],
+      signalStateAuth: ['未配置密钥','未設定密鑰','No key configured','キー未設定','키 미설정','لا يوجد مفتاح مُهيأ'],
+      signalStateError: ['读取失败','讀取失敗','Read failed','読み取り失敗','읽기 실패','فشل القراءة'],
       trackSort: ['追踪排序','追蹤排序','Tracking order','追跡の並び','추적 정렬','ترتيب التتبع'],
       trackSortRisk: ['风险优先','風險優先','Risk first','リスク優先','리스크 우선','الخطر أولاً'],
       trackSortChange: ['最近变化优先','最近變化優先','Newest change first','最新の変化順','최근 변화 우선','أحدث تغير أولاً'],
@@ -1592,6 +1640,12 @@
     let liveRefreshErrorChain = '';
     let liveFingerprint = '';
     const liveQueued = new Map();
+    // The signal stream keeps its own snapshot: it is a different measurement
+    // from the candidate radar, and letting one overwrite the other would make a
+    // rendering failure look like a data failure.
+    let signalData = null;
+    let signalBusy = false;
+    let signalFingerprint = '';
     // The tracking board keeps its own fingerprint, quadrant order and cooling
     // window. They live here rather than beside renderTrack so the board can be
     // re-rendered independently of the candidate radar.
@@ -2668,6 +2722,91 @@
       }).join('') || '<div class="empty">' + escapeHtml(t('trackEmpty')) + '</div>';
     }
 
+    // The signal stream answers "who is moving together", so a card leads with
+    // the wallets and the money rather than with a price. A pool anchor is
+    // attached only when that pool has actually been sighted: an unsighted pool
+    // is unknown, not zero, and rendering it as a number would invent a reading.
+    function signalStatusKey(data) {
+      if (!data) return 'signalStateWaiting';
+      if (data.status === 'READY') return 'signalStateReady';
+      if (data.status === 'PAUSED') return 'signalStatePaused';
+      if (data.status === 'AUTH_REQUIRED') return 'signalStateAuth';
+      if (data.status === 'ERROR') return 'signalStateError';
+      return 'signalStateWaiting';
+    }
+
+    function renderSignals() {
+      const chain = viewChain || activeChain(lastData);
+      const data = signalData && signalData.chain === chain ? signalData : null;
+      byId('signalState').textContent = t(signalStatusKey(data));
+      const listed = data && Array.isArray(data.signals) ? data.signals : [];
+      byId('signalMeta').textContent = t('signalBrief', { n: listed.length,
+        time: data && data.lastSuccessAt ? relativeTime(data.lastSuccessAt) : t('noRecord') });
+      const fingerprint = JSON.stringify([chain, currentLocale, listed]);
+      if (fingerprint === signalFingerprint) return;
+      signalFingerprint = fingerprint;
+      // Strength leads, recency breaks ties. The stream arrives newest-first,
+      // but the rungs are not equally worth reading, and a flood of two-wallet
+      // signals must not bury the documented three-wallet ones underneath it.
+      const rank = { VERY_STRONG: 3, STRONG: 2, MEDIUM: 1 };
+      const ordered = listed.slice().sort(function (a, b) {
+        return (rank[b.strength] || 0) - (rank[a.strength] || 0) || number(b.at) - number(a.at);
+      });
+      byId('signalRows').innerHTML = ordered.slice(0, 24).map(function (signal) {
+        const kind = signal.kind === 'ENTRY' ? 'entry' : signal.kind === 'EXIT' ? 'exit' : 'new';
+        const kindKey = kind === 'entry' ? 'signalKindEntry' : kind === 'exit' ? 'signalKindExit' : 'signalKindNew';
+        const activityKey = signal.activity === 'BOTH' ? 'signalActivityBoth'
+          : signal.activity === 'KOL' ? 'signalActivityKol' : 'signalActivitySmart';
+        const strengthKey = signal.strength === 'VERY_STRONG' ? 'signalStrengthVeryStrong'
+          : signal.strength === 'STRONG' ? 'signalStrengthStrong' : signal.strength === 'MEDIUM' ? 'signalStrengthMedium' : null;
+        const wallets = number(signal.wallets), amount = number(signal.amountUsd);
+        const firstCap = number(signal.firstMarketCap), cap = number(signal.marketCap), liquidity = number(signal.liquidity);
+        const lines = [];
+        if (wallets > 0) lines.push('<div class="signal-reason"><b>' + escapeHtml(t('signalWalletCount', { n: wallets })) + '</b></div>');
+        if (wallets > 0 && amount > 0) lines.push('<div class="signal-anchor">'
+          + escapeHtml(t('signalAvgAmount', { amount: formatMoney(amount / wallets) })) + '</div>');
+        if (firstCap > 0 || cap > 0) lines.push('<div class="signal-anchor">'
+          + escapeHtml(t('signalAnchor', { first: formatMoney(firstCap), now: formatMoney(cap) })) + '</div>');
+        if (liquidity > 0) lines.push('<div class="signal-anchor">' + escapeHtml(t('liveLp') + ' ' + formatMoney(liquidity)) + '</div>');
+        const tags = ['<span class="live-tag">' + escapeHtml(t(kindKey)) + '</span>'];
+        if (kind !== 'new') tags.push('<span class="live-tag">' + escapeHtml(t(activityKey)) + '</span>');
+        if (strengthKey) tags.push('<span class="live-tag">' + escapeHtml(t(strengthKey)) + '</span>');
+        // The intersection of "we saw the pool" and "proven wallets are buying"
+        // is the thing this panel exists to surface, so it is marked explicitly
+        // rather than left implicit in whether a number happens to be present.
+        if (kind !== 'new' && (firstCap > 0 || cap > 0)) tags.push('<span class="live-tag">' + escapeHtml(t('signalCrossed')) + '</span>');
+        if (signal.reason === 'CLUSTER_EXIT_FULL') tags.push('<span class="live-tag">' + escapeHtml(t('signalExitFull')) + '</span>');
+        if (signal.reason === 'CLUSTER_EXIT_PART') tags.push('<span class="live-tag">' + escapeHtml(t('signalExitPart')) + '</span>');
+        return '<article class="signal-card signal-' + kind + '">'
+          + '<div class="signal-card-head"><strong>' + escapeHtml(signal.symbol || '?') + '</strong><span class="muted">'
+          + escapeHtml(signal.at ? relativeTime(signal.at) : t('noRecord')) + '</span></div>'
+          + '<div class="muted">' + escapeHtml(signal.name || '') + '</div>'
+          + '<div class="addr mono">' + escapeHtml(String(signal.address).slice(0, 8) + '…' + String(signal.address).slice(-6)) + '</div>'
+          + lines.join('') + '<div class="signal-tags">' + tags.join('') + '</div></article>';
+      }).join('') || '<div class="empty">' + escapeHtml(t('signalEmpty')) + '</div>';
+    }
+
+    async function refreshSignals() {
+      renderSignals();
+      if (signalBusy || document.hidden || !lastData) return;
+      const chain = viewChain || activeChain(lastData);
+      signalBusy = true;
+      try {
+        const response = await fetch('/api/signals', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chain: chain }), signal: AbortSignal.timeout(8000) });
+        // 503 means this build has no signal channel configured. That is a
+        // capability answer, not a failure, so the panel simply stays empty.
+        if (response.status === 503) { signalData = null; return; }
+        if (!response.ok) throw new Error('signals_failed');
+        const data = await response.json();
+        if (!data || data.chain !== chain || !Array.isArray(data.signals)) throw new Error('signals_invalid');
+        if (chain === (viewChain || activeChain(lastData))) signalData = data;
+      } catch {
+        // A transient read failure keeps the previous snapshot on screen rather
+        // than blanking the panel and implying the signals went away.
+      } finally { signalBusy = false; renderSignals(); }
+    }
+
     async function refreshLive() {
       renderLive();
       if (!liveEnabled || liveBusy || document.hidden || !lastData) return;
@@ -2730,6 +2869,7 @@
       renderTelemetry();
       renderLive();
       renderTrack();
+      renderSignals();
       if (shouldRenderCandidates) renderCandidates();
       else renderVoiceSpotlight();
     }
@@ -3091,7 +3231,11 @@
       refresh();
       refreshLive();
       setInterval(refreshLive, 5000);
-      document.addEventListener('visibilitychange', function () { if (!document.hidden) refreshLive(); });
+      // The engine samples pools every 90-120s and trades every 25s, so a 15s
+      // page refresh is already faster than the data can change.
+      refreshSignals();
+      setInterval(refreshSignals, 15000);
+      document.addEventListener('visibilitychange', function () { if (!document.hidden) { refreshLive(); refreshSignals(); } });
       setInterval(refresh, 3000);
       setInterval(renderTelemetry, 1000);
       setInterval(renderCandidates, 60000);

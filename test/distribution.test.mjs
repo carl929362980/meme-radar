@@ -60,7 +60,7 @@ test('open-source release metadata uses AGPL and remains blocked from accidental
   assert.equal(fs.existsSync(path.join(root, 'LICENSE')), true);
 });
 
-test('community production entry uses only local AVE credentials and never loads a GMGN client or key store', () => {
+test('community production entry keeps wiring AVE through local credentials and loads no credential store', () => {
   const main = fs.readFileSync(path.join(root, 'src/main.mjs'), 'utf8');
   assert.match(main, /import\s*\{\s*AveClient\s*\}\s*from\s*['"]\.\/ave\.mjs['"]/);
   assert.match(main, /apiKeyProvider:\s*\(\)\s*=>\s*ave\.getKey\(\)/);
@@ -70,7 +70,17 @@ test('community production entry uses only local AVE credentials and never loads
   assert.match(main, /new Scanner\(\{[^;]+sharedRequestIntervalMs/);
   assert.match(main, /new Scanner\(\{ provider: market/);
   assert.match(main, /new LiveDiscovery\(\{ provider: market/);
-  assert.doesNotMatch(main, /(?:import[^;]+from\s*['"]\.\/gmgn|new\s+Gmgn|process\.env\.(?:GMGN|AVE)|saveGmgnKey:|getGmgnOnboarding:)/);
+  // This test previously ended by banning any reference to a second market
+  // client, as a proxy for "the open-source build needs nothing but an AVE key".
+  // That clause was retired on 2026-10-03 because the proxy had stopped tracking
+  // the property: AVE's trending list cannot supply a pool younger than an hour,
+  // so discovery is impossible with AVE alone, and the signal channel is a
+  // separate, optional, key-gated module rather than a replacement credential
+  // path. What the ban actually protected is no credential machinery, which is
+  // asserted here directly and is still forbidden. See
+  // test/source-invariants.test.mjs for the full reasoning and the wider
+  // zero-dependency and no-signing-key assertions.
+  assert.doesNotMatch(main, /gmgn-key-store|gmgn-connection|gmgn-readonly-worker|saveGmgnKey|getGmgnOnboarding|GMGN_PRIVATE_KEY/);
 });
 
 test('clean setup and doctor work offline without npm, installed modules, credentials or state',
