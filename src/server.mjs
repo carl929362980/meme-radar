@@ -7,7 +7,7 @@ import { tokenKey } from './local-store.mjs';
 import { CHART_RISK_VERSION, applyRiskExclusion } from './chart-risk.mjs';
 import { AveError } from './ave-settings.mjs';
 import { activeLiveLeads } from './live-leads.mjs';
-import { classifyTrack, EXIT_ALERT_MS, FLOW_KINDS, FLOW_ACTIVITIES, FLOW_STRENGTHS, worthWatching } from './tracking.mjs';
+import { classifyTrack, EXIT_ALERT_MS, FLOW_KINDS, FLOW_ACTIVITIES, FLOW_STRENGTHS, rateTrack, TRACK_GRADES, worthWatching } from './tracking.mjs';
 import { VETO_STATES, VETO_CODES, VETO_LEVELS } from './veto.mjs';
 
 const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
@@ -580,6 +580,11 @@ function publicTrack(row = {}) {
     // The quadrant is a market-behaviour read, derived on projection so it
     // always reflects the latest observation rather than a stored verdict.
     quadrant: classifyTrack(row),
+    // And the grade, derived the same way and for the same reason: it is a read
+    // of the stored evidence at request time, so a rung that expired, a wallet
+    // cluster that turned round or a breakout that failed cannot leave a grade
+    // standing after the fact it was made from has gone.
+    grade: rateTrack(row),
     risk: publicTrackRisk(row.risk),
     // The cluster of wallets that last moved on this lead, and whether that is
     // currently an exit. The window lives on the engine's side so the page can
@@ -624,8 +629,14 @@ function publicTrackList(source) {
     .map(publicTrack);
 }
 
-function publicTrackSummary(source = {}) {
+function publicTrackSummary(source = {}, rows = null) {
   const quadrants = source.quadrants || {};
+  // The grade distribution is tallied from the rows when the caller hands them
+  // over, so what the header reports and what the cards wear are the same read of
+  // the same list rather than two states that can drift apart.
+  const grades = Array.isArray(rows)
+    ? rows.reduce((tally, row) => { tally[row.grade] = (tally[row.grade] || 0) + 1; return tally; }, {})
+    : (source.grades || {});
   return {
     tracked: finite(source.tracked),
     active: finite(source.active),
@@ -651,6 +662,12 @@ function publicTrackSummary(source = {}) {
       BREAKOUT: finite(quadrants.BREAKOUT),
       WATCH: finite(quadrants.WATCH)
     },
+    // The grade distribution over the same rows the quadrants were counted on,
+    // reported rather than folded into them: how many leads are strong and how
+    // many are merely moving are two facts, and a reader deciding whether to open
+    // this board at all needs the first one. Every grade is named here rather
+    // than passed through, so a grade added later cannot reach the page unnamed.
+    grades: Object.fromEntries(TRACK_GRADES.map(name => [name, finite(grades[name])])),
     recentSignals: Array.isArray(source.recentSignals) ? source.recentSignals.slice(0, 20).map(signal => ({
       ...publicTrackSignal(signal), chain: text(signal.chain, 32), address: text(signal.address, 80), symbol: text(signal.symbol || '?', 30)
     })) : []
@@ -843,6 +860,12 @@ export function toPublicStatus(source = {}) {
   const priorityMarketCap = Array.isArray(source.policy?.priorityMarketCap)
     ? source.policy.priorityMarketCap.slice(0, 2).map(value => finite(value))
     : [];
+  // Built once and handed to the summary as well, so the distribution the header
+  // prints is a tally of the rows the page was actually given. Reading it off the
+  // stored summary instead would leave the two able to disagree - most visibly
+  // straight after a restart, when the state on disk predates the tally and the
+  // header would report no grades at all beside a board of graded cards.
+  const trackBoard = publicTrackList(source.track);
   return {
     version: finite(source.version, 1),
     status,
@@ -876,8 +899,8 @@ export function toPublicStatus(source = {}) {
     sourceHealth: publicSourceHealth(source.sourceHealth),
     auditQueueStats: publicAuditQueueStats(source.auditQueueStats),
     outcomeSummary: publicOutcomeSummary(source.outcomeSummary),
-    track: publicTrackList(source.track),
-    trackSummary: publicTrackSummary(source.trackSummary),
+    track: trackBoard,
+    trackSummary: publicTrackSummary(source.trackSummary, trackBoard),
     policy: {
       chain: text(source.policy?.chain, 32),
       priorityMarketCap,
@@ -1297,9 +1320,20 @@ export function createServer({ state, settings, controls, switchChain,
             || audit && ['HARD_REJECT', 'REJECTED'].includes(publicCandidate(audit).status);
         };
         const removed = snapshot.rows.filter(row => state.value.riskExclusions?.[tokenKey(body.chain, row.address)] || rejected(row)).length;
+        // The radar's own rows are graded by the same function the board uses,
+        // joined on the address. Measured before this was written: every row the
+        // radar shows is already a lead the tracking set holds, so this is not a
+        // second opinion - it is the same verdict, so that the two panels cannot
+        // disagree about whether a token is worth looking at. A row with no
+        // record at all is reported as ungraded rather than given a grade it has
+        // not earned, and the page drops it and counts it.
+        const trackRecords = new Map((Array.isArray(scope.track) ? scope.track : [])
+          .map(record => [key(record.address), record]));
         snapshot.rows = snapshot.rows.filter(row => !state.value.riskExclusions?.[tokenKey(body.chain, row.address)] && !rejected(row)).map(row => {
           const audit = audits.get(key(row.address));
-          return { ...row, audit: audit ? { status: publicCandidate(audit).status, at: finite(audit.auditedAt) } : null };
+          const record = trackRecords.get(key(row.address));
+          return { ...row, audit: audit ? { status: publicCandidate(audit).status, at: finite(audit.auditedAt) } : null,
+            trackGrade: record ? rateTrack(record) : null };
         });
         const freshRows = currentLiveRows(snapshot.rows, scope, body.chain);
         const freshKeys = new Set(freshRows.map(row => tokenKey(body.chain, row.address)));

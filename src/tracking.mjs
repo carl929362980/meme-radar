@@ -329,6 +329,52 @@ export function worthWatching(record, now = Date.now()) {
   });
 }
 
+// One grade per lead, answering one question: how strong is the evidence that
+// this is worth entering *now*. It reads behaviour only. The contract verdict and
+// the pre-flight veto stay their own badges, for the same reason the quadrant
+// keeps them apart - a clean contract must never be able to lift a lead's grade,
+// and a lead whose only news is bad must not be able to hide behind a good one.
+//
+// The ladder is coarse on purpose. The evidence this board actually holds
+// supports four distinctions, not twenty, and a finer scale would only invite a
+// reader to compare two leads that differ by a rounding error.
+//
+//   S  a proven wallet cluster is buying *and* a demand rung has been crossed
+//   A  a proven wallet cluster is buying
+//   B  a demand rung was crossed - or the lead is breaking out, which reaches
+//      the same place one rung earlier
+//   C  evidence exists, but none of it is demand: only exits, only declines
+//   D  nothing has happened to it at all
+//
+// The grade is not a second copy of the quadrant. The quadrant says what kind of
+// move this is; the grade says how much of it there is, and the two disagree in
+// the case that matters most - a lead whose price has not moved yet but whose
+// wallets are already buying is a WATCH quadrant and an A grade, and that is
+// exactly the lead this board exists to put in front of a reader.
+export const TRACK_GRADES = Object.freeze(['S', 'A', 'B', 'C', 'D']);
+
+export function rateTrack(record, now = Date.now()) {
+  const signals = Array.isArray(record?.signals) ? record.signals : [];
+  const demand = signals.filter(signal => DEMAND_AXES.includes(signal?.axis) && Number(signal?.rung) > 0);
+  // The latest side the wallets are on, not the only side they were ever on: an
+  // exit an hour ago must not leave a lead graded as if the money were still
+  // arriving, and a buy an hour after an exit must not be buried by it.
+  const buying = record?.flow?.kind === 'ENTRY';
+  if (buying && demand.length) return 'S';
+  if (buying) return 'A';
+  const quadrant = classifyTrack(record, now);
+  if (demand.length || quadrant === 'BREAKOUT') return 'B';
+  // A risk quadrant is evidence of something even when no rung of its own ladder
+  // happened to be crossed. A pool that has lost most of its depth, or a price
+  // climbing on a supply that is draining, is the loudest thing this board can
+  // carry - and grading it "nothing has happened yet" would file it under the
+  // leads that had merely been seen, which is the one place a reader would never
+  // look for it. C means "there is evidence and none of it is demand", and that
+  // is exactly what a drain is.
+  if (signals.length || quadrant === 'POOL_PULLED' || quadrant === 'DISTRIBUTION') return 'C';
+  return 'D';
+}
+
 // Reads which feed supplied a lead's market facts. Two feeds do not agree on
 // scale — the calibration run measured the same pool's liquidity differing by up
 // to 5x — so a record may only be advanced by the feed that set its baseline.
@@ -494,12 +540,19 @@ const QUADRANTS = Object.freeze(['POOL_PULLED', 'DISTRIBUTION', 'BREAKOUT', 'WAT
 export function summarizeTracking(records, now = Date.now(), { coolingMs = 30 * 60_000, vetoed = 0, quiet = 0 } = {}) {
   const rows = Array.isArray(records) ? records : [];
   const quadrants = Object.fromEntries(QUADRANTS.map(name => [name, 0]));
+  // The grade distribution, tallied over the same rows as the quadrants and kept
+  // beside them rather than folded in. The two answer different questions about
+  // one lead - what kind of move, and how much evidence - and a board that showed
+  // only one of them would let a loud mover with one thin signal outrank a quiet
+  // lead the wallets were already buying.
+  const grades = Object.fromEntries(TRACK_GRADES.map(name => [name, 0]));
   let cooling = 0;
   let atRisk = 0;
   let exiting = 0;
   let blocked = 0;
   for (const row of rows) {
     quadrants[classifyTrack(row, now)]++;
+    grades[rateTrack(row, now)]++;
     if (now - Number(row.lastSeenAt || 0) > coolingMs) cooling++;
     // Counted separately from the quadrant for the same reason the contract
     // verdict is: "wallets are leaving" is evidence the quadrant reads, but the
@@ -532,5 +585,5 @@ export function summarizeTracking(records, now = Date.now(), { coolingMs = 30 * 
     // optional: a board that shrinks in silence is indistinguishable from a quiet
     // market, which is the failure every neighbouring default here was caught in.
     quiet: Math.max(0, Number(quiet) || 0),
-    quadrants, recentSignals: signals };
+    quadrants, grades, recentSignals: signals };
 }

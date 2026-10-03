@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { observeTracks, classifyTrack, summarizeTracking, trackSnapshot, trackKey, TRACK_AXES, EXIT_ALERT_MS, worthWatching } from '../src/tracking.mjs';
+import { observeTracks, classifyTrack, rateTrack, summarizeTracking, trackSnapshot, trackKey, TRACK_AXES, EXIT_ALERT_MS, worthWatching } from '../src/tracking.mjs';
 
 const AT = Date.UTC(2026, 9, 2, 12, 0, 0);
 const EVM = '0x1111111111111111111111111111111111111111';
@@ -160,6 +160,48 @@ test('the quadrant can put a lead on the board before its first rung is crossed'
     snapshot: first, latest: { ...first, price: 1.6 }, signals: [] };
   assert.equal(classifyTrack(breaking, AT), 'BREAKOUT');
   assert.equal(worthWatching(breaking, AT), true);
+});
+
+test('the grade ranks a lead by how much evidence it carries, not by which kind', () => {
+  const flat = { price: 1, marketCap: 20_000, liquidity: 10_000, holders: 100, top10Rate: null, at: AT };
+  const at = (signals, over = {}) => ({ chain: 'bsc', address: EVM, symbol: 'FISH', source: 'market',
+    firstSeenAt: AT, lastSeenAt: AT, snapshot: flat, latest: flat, signals, ...over });
+  const rung = (axis, level) => ({ id: axis + ':' + level, axis, rung: level, value: level, at: AT });
+  const entry = { kind: 'ENTRY', at: AT, wallets: 3, amountUsd: 500 };
+
+  assert.equal(rateTrack(at([]), AT), 'D', 'a lead nothing has happened to carries no evidence');
+  assert.equal(rateTrack(at([rung('liquidity', -0.3)]), AT), 'C', 'a decline is evidence, but not demand');
+  assert.equal(rateTrack(at([{ id: 'flow:EXIT', axis: 'flow', kind: 'EXIT', rung: 3, value: 500, at: AT }]), AT), 'C');
+  assert.equal(rateTrack(at([rung('price', 2)]), AT), 'B', 'a crossed rung with no wallets is one rung of evidence');
+  assert.equal(rateTrack(at([], { flow: entry }), AT), 'A', 'wallets buying is the strongest single fact');
+  assert.equal(rateTrack(at([rung('price', 2)], { flow: entry }), AT), 'S',
+    'a buy and a crossed rung together is the top of the ladder');
+
+  // The latest side the wallets are on decides, not the only side they were ever
+  // on: an exit that has since happened must not leave a lead graded as if the
+  // money were still arriving.
+  assert.equal(rateTrack(at([rung('price', 2)], { flow: { ...entry, kind: 'EXIT' } }), AT), 'B');
+
+  // A drained pool is a verdict about evidence even when its own ladder never
+  // reported a rung, and grading it "nothing has happened" would file the loudest
+  // thing on the board under the leads that had merely been seen.
+  const drained = { ...at([]), latest: { ...flat, liquidity: 2_000 } };
+  assert.equal(classifyTrack(drained, AT), 'POOL_PULLED');
+  assert.equal(rateTrack(drained, AT), 'C');
+});
+
+test('the summary reports the grade distribution beside the quadrants', () => {
+  const flat = { price: 1, marketCap: 20_000, liquidity: 10_000, holders: 100, top10Rate: null, at: AT };
+  const at = (signals, over = {}) => ({ chain: 'bsc', address: EVM, symbol: 'FISH', source: 'market',
+    firstSeenAt: AT, lastSeenAt: AT, snapshot: flat, latest: flat, signals, ...over });
+  const rung = (axis, level) => ({ id: axis + ':' + level, axis, rung: level, value: level, at: AT });
+  const summary = summarizeTracking([
+    at([rung('price', 2)], { flow: { kind: 'ENTRY', at: AT, wallets: 3, amountUsd: 500 } }),
+    at([rung('price', 2)]),
+    at([{ id: 'flow:EXIT', axis: 'flow', kind: 'EXIT', rung: 3, value: 500, at: AT }])
+  ], AT, { quiet: 4 });
+  assert.deepEqual(summary.grades, { S: 1, A: 0, B: 1, C: 1, D: 0 });
+  assert.equal(summary.quiet, 4, 'a board that left leads out still says how many');
 });
 
 test('a feed publishing no price still reports a multiple, read from market cap', () => {

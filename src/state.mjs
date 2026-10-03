@@ -43,7 +43,8 @@ function defaultState() {
     // change the cohort calibration is measured on.
     track: [],
     trackSummary: { tracked: 0, active: 0, cooling: 0, exiting: 0,
-      quadrants: { POOL_PULLED: 0, DISTRIBUTION: 0, BREAKOUT: 0, WATCH: 0 }, recentSignals: [] },
+      quadrants: { POOL_PULLED: 0, DISTRIBUTION: 0, BREAKOUT: 0, WATCH: 0 },
+      grades: { S: 0, A: 0, B: 0, C: 0, D: 0 }, recentSignals: [] },
     sourceHealth: {},
     events: []
   };

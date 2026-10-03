@@ -227,6 +227,27 @@ test('AVE live endpoint allowlists fields, keeps quote expiry and supplies the a
   vm.runInNewContext(draw, context);
   assert.equal((elements.liveRows.innerHTML.match(/voice-highlight/g) || []).length, 16,
     'every token in a large spoken batch remains visible above ordinary cards');
+
+  // The grade - and the junk rule that reads from it. A row the engine graded D
+  // is cleared and counted; a row it has not graded at all is kept, because an
+  // absent grade is not a verdict. It means the tracking set holds no record of
+  // that token, which is a different statement, and treating the two alike would
+  // let a broken join empty this panel in silence.
+  context.voiceSpotlightSnapshot = null;
+  context.voiceSpotlightRank = () => Infinity;
+  context.liveData = { ...response.body, rows: [
+    row(now, { address: '0x' + 'a'.repeat(40), symbol: 'JUNK', trackGrade: 'D' }),
+    row(now, { symbol: 'GRADED', trackGrade: 'A' }),
+    row(now, { address: '0x' + 'b'.repeat(40), symbol: 'UNGRADED' })
+  ] };
+  context.liveFingerprint = '';
+  vm.runInNewContext(draw, context);
+  assert.match(elements.liveRows.innerHTML, /GRADED/);
+  assert.match(elements.liveRows.innerHTML, /UNGRADED/, 'a row with no grade is not junk');
+  assert.doesNotMatch(elements.liveRows.innerHTML, /JUNK|live-tag track-grade track-grade-d/);
+  assert.match(elements.liveRows.innerHTML, /live-tag track-grade track-grade-a/,
+    'a graded row wears the same badge the board prints');
+  assert.match(elements.liveMeta.textContent, /boardJunkCulled/, 'the cleared count is reported, not swallowed');
 });
 
 test('live endpoint retains a passed display receipt without disguising it as fresh evidence or feeding speech', async () => {

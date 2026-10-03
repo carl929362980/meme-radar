@@ -407,7 +407,8 @@ function emptyScope() {
       completed1h: 0, completed2h: 0, completed6h: 0, completed24h: 0
     },
     trackSummary: { tracked: 0, active: 0, cooling: 0, atRisk: 0, exiting: 0,
-      quadrants: { POOL_PULLED: 0, DISTRIBUTION: 0, BREAKOUT: 0, WATCH: 0 }, recentSignals: [] },
+      quadrants: { POOL_PULLED: 0, DISTRIBUTION: 0, BREAKOUT: 0, WATCH: 0 },
+      grades: { S: 0, A: 0, B: 0, C: 0, D: 0 }, recentSignals: [] },
     sourceHealth: {}, screening: null, lastAttemptAt: 0, lastSuccessAt: 0, lastCompleteSuccessAt: 0,
     lastCycleMs: 0, retryAt: 0
   };

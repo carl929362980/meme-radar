@@ -680,6 +680,18 @@
     .track-card .track-tag-pool { color: #ffd2d8; background: #432b32; }
     .track-card .track-tag-watch { color: #c7dff2; background: #233540; }
     .track-card .track-tag-gate { color: #b6f2d8; background: #1d3b33; }
+    /* The grade is a strength, not a category, so it is painted as one scale
+       rather than as four unrelated colours: the tone cools as the evidence
+       thins, which lets a column of cards be read as an order without
+       consulting the legend. Only the strongest two carry the page's red-buy
+       tone, because only they mean money is arriving. Scoped to both card kinds
+       so the shared .live-tag rule cannot repaint it. */
+    .track-card .track-grade, .live-card .track-grade { font-size: 14px; white-space: nowrap; font-weight: 700; }
+    .track-card .track-grade-s, .live-card .track-grade-s { color: #ffe2d6; background: #4d2a22; }
+    .track-card .track-grade-a, .live-card .track-grade-a { color: #ffd7c4; background: #3c2a20; }
+    .track-card .track-grade-b, .live-card .track-grade-b { color: #cfe3f0; background: #22333d; }
+    .track-card .track-grade-c, .live-card .track-grade-c { color: #e0d6c2; background: #332f27; }
+    .track-card .track-grade-d, .live-card .track-grade-d { color: #c0c0c0; background: #2a2a2a; }
     @keyframes liveArrival { from { background: #253c4a; } to { background: #101b22; } }
     @media (max-width: 1000px) { .live-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     @media (max-width: 620px) { .live-grid { grid-template-columns: 1fr; } }
@@ -825,7 +837,8 @@
         <div><h2 id="trackTitle" data-i18n="boardTitle">聪明钱 · 追踪</h2><small data-i18n="boardDisclaimer">钱包在动 + 池子在变 · 首见对比</small></div>
         <span id="trackState" role="status" aria-live="polite" class="live-tag"></span>
         <select id="trackSort" class="field" data-i18n-aria="boardSort" aria-label="看板排序">
-          <option value="signal" selected data-i18n="boardSortSignal">聪明钱优先</option>
+          <option value="grade" selected data-i18n="boardSortGrade">评级优先</option>
+          <option value="signal" data-i18n="boardSortSignal">聪明钱优先</option>
           <option value="risk" data-i18n="trackSortRisk">风险优先</option>
           <option value="change" data-i18n="trackSortChange">最近变化优先</option>
           <option value="recent" data-i18n="trackSortRecent">最近出现优先</option>
@@ -1041,6 +1054,23 @@
       // never takes a row of its own - but it is still reported, because a board
       // that silently swallows part of its feed cannot be told from a quiet one.
       boardNewPools: ['新池 {n} 个未上板','新池 {n} 個未上板','{n} new pools not shown','新規プール {n} 件は非表示','신규 풀 {n}개 미표시','{n} برك جديدة غير معروضة'],
+      // The grade answers one question - how much evidence is there - and the
+      // quadrant answers a different one: what kind of move this is. They are
+      // shown as two badges rather than merged into one, because the case that
+      // matters most is the one they disagree on: a lead whose price has not
+      // moved yet but whose wallets are already buying.
+      boardSortGrade: ['评级优先','評級優先','Strongest grade first','評価の高い順','등급 우선','التقييم الأقوى أولاً'],
+      trackGrade: ['评级','評級','Grade','評価','등급','التقييم'],
+      trackGradeS: ['强共振：钱包在买、且已跨台阶','強共振：錢包在買、且已跨台階','Wallets buying and a rung crossed','ウォレット買い＋段階突破','지갑 매수 + 단계 돌파','محافظ تشتري مع تجاوز مستوى'],
+      trackGradeA: ['有资金：钱包在买','有資金：錢包在買','Wallets buying','ウォレットが買い','지갑이 매수 중','محافظ تشتري'],
+      trackGradeB: ['有台阶：需求指标跨阈','有台階：需求指標跨閾','A demand rung crossed','需要指標がしきい値を突破','수요 지표 임계 통과','تجاوز مؤشر طلب'],
+      trackGradeC: ['有证据，但都不是需求','有證據，但都不是需求','Evidence, but none of it demand','材料はあるが需要ではない','근거는 있으나 수요는 아님','أدلة لكن لا طلب'],
+      trackGradeD: ['还没发生任何事','還沒發生任何事','Nothing has happened yet','まだ何も起きていない','아직 아무 일도 없음','لم يحدث شيء بعد'],
+      // The radar now carries the board's own grade, so a token neither of them
+      // would act on stops taking up a card. The count is printed for the same
+      // reason every other count on this page is: a list that silently shrinks
+      // cannot be told apart from a source that went quiet.
+      boardJunkCulled: ['已清掉 {n} 个垃圾','已清掉 {n} 個垃圾','{n} junk cleared','価値なし {n} 件を削除','쓰레기 {n}개 정리','تم تنظيف {n} من غير المفيد'],
       signalTitle: ['聪明钱共振','聰明錢共振','Smart-money convergence','スマートマネー共振','스마트머니 공명','تقارب الأموال الذكية'],
       signalDisclaimer: ['首见锚点 · 多钱包同向 · 含退出预警','首見錨點 · 多錢包同向 · 含退出預警','First-sighting anchor · several wallets one way · exits included','初回アンカー・複数ウォレット同方向・出口警戒あり','최초 관측 앵커 · 다중 지갑 동방향 · 이탈 경보 포함','مرساة أول رصد · عدة محافظ باتجاه واحد · مع تنبيه الخروج'],
       signalEmpty: ['正在累积聪明钱成交，暂无共振信号','正在累積聰明錢成交，暫無共振訊號','Accumulating smart-money trades; no convergence yet','スマートマネーの約定を蓄積中。共鳴シグナルはまだありません','스마트머니 체결 누적 중 · 아직 공명 신호 없음','يجري تجميع صفقات الأموال الذكية؛ لا تقارب بعد'],
@@ -1737,6 +1767,26 @@
     // The map above carries i18n keys; the badge class names are kebab-cased.
     const TRACK_CLASS = { POOL_PULLED: 'track-tag-pool', DISTRIBUTION: 'track-tag-distribution', BREAKOUT: 'track-tag-breakout', WATCH: 'track-tag-watch' };
     const TRACK_RANK = { POOL_PULLED: 0, DISTRIBUTION: 1, BREAKOUT: 2, WATCH: 3 };
+    // The grade, as its own badge beside the quadrant. The two answer different
+    // questions - what kind of move is this, and how much evidence is there - and
+    // the case that matters most is the one where they disagree: a lead whose
+    // price has not moved yet but whose wallets are already buying is a WATCH
+    // quadrant and an A grade.
+    const TRACK_GRADE_TAG = { S: 'trackGradeS', A: 'trackGradeA', B: 'trackGradeB', C: 'trackGradeC', D: 'trackGradeD' };
+    const TRACK_GRADE_CLASS = { S: 'track-grade-s', A: 'track-grade-a', B: 'track-grade-b', C: 'track-grade-c', D: 'track-grade-d' };
+    const TRACK_GRADE_ORDER = { S: 0, A: 1, B: 2, C: 3, D: 4 };
+    // A card the tracking set never held has no record to grade, so its grade is
+    // read off the one piece of evidence it does carry - which side the wallets
+    // moved. That is the same rule rateTrack applies, with the pool axes simply
+    // absent: an entry is money arriving, and an exit is evidence that is not
+    // demand. A card that *does* have a record never borrows its wallet's side
+    // for a grade: the engine's own grade is the answer, and a row that arrived
+    // without one is ungraded rather than upgraded on the strength of a trade.
+    function trackGradeOf(card) {
+      if (card.row) return TRACK_GRADE_TAG[card.row.grade] ? card.row.grade : 'D';
+      if (card.wallet) return card.wallet.kind === 'ENTRY' ? 'A' : 'C';
+      return 'D';
+    }
     // How long a lead may go unobserved before its card is marked cooling. The
     // row and its anchor are kept, only the freshness label changes.
     const TRACK_COOLING_MS = 30 * 60000;
@@ -2628,7 +2678,35 @@
       const reminded = rows.filter(function (row) { return Number.isFinite(voiceSpotlightRank(row, Date.now())); });
       rows = reminded.concat(rows.filter(function (row) { return !Number.isFinite(voiceSpotlightRank(row, Date.now())); })
         .slice(0, Math.max(0, 15 - reminded.length)));
-      byId('liveMeta').textContent = t('liveBrief', { n: rows.length, time: data && data.lastSuccessAt ? relativeTime(data.lastSuccessAt) : t('noRecord') });
+      // The board's own grade decides what earns a card here as well, which is
+      // the whole point of grading every lead once instead of twice: measured on
+      // the live feed, every row this panel showed was already a lead the board
+      // carried, and the remainder had nothing behind it at all. A row that was
+      // just spoken is kept whatever its grade - the spotlight has to be able to
+      // find its card - and everything cleared is counted, because a list that
+      // silently shrinks cannot be told apart from a source that went quiet.
+      const isSpotlit = function (row) { return Number.isFinite(voiceSpotlightRank(row, Date.now())); };
+      // Read locally rather than through a module-scope helper: this function is
+      // sliced out of the page and run on its own by a test, so anything it
+      // reaches for outside its own body would be undefined there. An unknown
+      // grade reads as an empty string, never as a verdict.
+      const gradeOfRow = function (row) {
+        const grade = row && row.trackGrade;
+        return typeof grade === 'string' && 'SABCD'.indexOf(grade) >= 0 ? grade : '';
+      };
+      // A row is only cleared when the engine has actually graded it as junk.
+      // An absent grade is not a verdict: it means the tracking set has no record
+      // of this token at all, which is a different statement, and treating the two
+      // alike would let a broken join empty this panel in silence - the exact
+      // failure the counts below exist to make impossible. A row that was just
+      // spoken is kept whatever its grade, because the spotlight has to be able to
+      // find its card.
+      const isJunk = function (row) { return gradeOfRow(row) === 'D'; };
+      const kept = rows.filter(function (row) { return isSpotlit(row) || !isJunk(row); });
+      const culled = rows.length - kept.length;
+      rows = kept;
+      byId('liveMeta').textContent = t('liveBrief', { n: rows.length, time: data && data.lastSuccessAt ? relativeTime(data.lastSuccessAt) : t('noRecord') })
+        + (culled > 0 ? ' · ' + t('boardJunkCulled', { n: formatCount(culled) }) : '');
       byId('liveMeta').title = t('liveMeta', { chain: chainLabel(chainCatalog.find(function (item) { return item.id === chain; })),
         time: data && data.lastSuccessAt ? relativeTime(data.lastSuccessAt) : t('noRecord'), shown: rows.length, total: data && data.receivedCount || 0 })
         + (data && data.diagnostics ? ' · ' + t('liveCoverage', { received: data.receivedCount || 0, scope: data.diagnostics.inRange,
@@ -2645,8 +2723,14 @@
         const spotlight = Number.isFinite(voiceSpotlightRank(row, Date.now()));
         const links = radarLinks(row);
         const unit = function (label, value, tone) { return '<div><small>' + escapeHtml(label) + '</small><b class="mono ' + (tone || '') + '">' + escapeHtml(value) + '</b></div>'; };
+        // The same grade the board prints, because it is literally the same
+        // reading - the engine joins it on the address rather than recomputing it
+        // here, so the two panels cannot end up disagreeing about one token.
+        const rowGrade = gradeOfRow(row);
+        const gradeBadge = rowGrade ? '<span class="live-tag track-grade track-grade-' + rowGrade.toLowerCase()
+          + '" title="' + escapeHtml(t('trackGrade' + rowGrade)) + '">' + escapeHtml(rowGrade) + '</span> ' : '';
         return '<article id="live-card-' + encodeURIComponent(voiceSpotlightKey(row)) + '" tabindex="-1" class="live-card' + (isNew ? ' new-sighting' : '') + (spotlight ? ' voice-highlight' : '') + '"><div class="live-card-head"><strong>' + escapeHtml(row.symbol) + '</strong>'
-          + '<span class="live-tag">' + escapeHtml(t(row.retainedSnapshot ? 'liveRetained' : row.discoveryState === 'PENDING' ? 'livePending' : row.stale ? 'liveStale' : row.auditEligible ? 'liveEligible' : isNew ? 'liveNew' : 'liveUnreviewed')) + '</span></div><div class="muted">' + escapeHtml(row.name) + '</div>'
+          + '<span>' + gradeBadge + '<span class="live-tag">' + escapeHtml(t(row.retainedSnapshot ? 'liveRetained' : row.discoveryState === 'PENDING' ? 'livePending' : row.stale ? 'liveStale' : row.auditEligible ? 'liveEligible' : isNew ? 'liveNew' : 'liveUnreviewed')) + '</span></span></div><div class="muted">' + escapeHtml(row.name) + '</div>'
           + '<div class="addr mono">' + escapeHtml(row.address.slice(0,8) + '…' + row.address.slice(-6)) + '</div>'
           + '<div class="live-numbers">' + unit(t('liveCap'), formatMoney(row.marketCap))
           + unit(t('liveLp'), Number.isFinite(row.liquidity) ? formatMoney(row.liquidity) : t('liveFetching'))
@@ -2736,6 +2820,20 @@
           const rank = function (card) { return card.row ? TRACK_RANK[card.row.quadrant] : 5; };
           return rank(a) - rank(b) || lastMoveOf(b) - lastMoveOf(a);
         }
+        // The grade leads because it is the ranking a reader is choosing from:
+        // "how much evidence is there" is the question the badge on every card
+        // answers, so a list that ignored it would be showing a number it does
+        // not use. Within a grade the side still decides - a wallet buy is not
+        // outranked by a crossed rung that merely shares its letter - and the
+        // clock comes last, as a tie-break rather than an argument.
+        if (mode === 'grade') {
+          return TRACK_GRADE_ORDER[trackGradeOf(a)] - TRACK_GRADE_ORDER[trackGradeOf(b)]
+            || rankOf(a) - rankOf(b)
+            || walletsOf(b) - walletsOf(a)
+            || amountOf(b) - amountOf(a)
+            || lastMoveOf(b) - lastMoveOf(a)
+            || firstSeenOf(b) - firstSeenOf(a);
+        }
         return rankOf(a) - rankOf(b)
           || walletsOf(b) - walletsOf(a)
           || amountOf(b) - amountOf(a)
@@ -2772,6 +2870,19 @@
           + ' · ' + ['POOL_PULLED', 'DISTRIBUTION', 'BREAKOUT', 'WATCH'].map(function (name) {
             return t(TRACK_TAG[name]) + ' ' + formatCount(summary.quadrants ? summary.quadrants[name] : 0);
           }).join(' · ')
+          // The second read of the same rows, kept beside the quadrants: how much
+          // evidence each lead carries. Only the grades actually present are
+          // printed. A D cannot reach this board by construction - a lead nothing
+          // has happened to has no reason to be on it - so a permanent "D0" would
+          // be this page reporting a fact about its own rule rather than about
+          // the market.
+          + (function () {
+            const grades = summary.grades || {};
+            const shown = ['S', 'A', 'B', 'C', 'D'].filter(function (name) { return number(grades[name]) > 0; });
+            return shown.length ? ' · ' + t('trackGrade') + ' ' + shown.map(function (name) {
+              return name + formatCount(grades[name]);
+            }).join(' ') : '';
+          })()
           // Contract risk is reported next to the quadrants, not merged into
           // them: a safety count and a behaviour count are different questions.
           + (number(summary.atRisk) > 0 ? ' · ' + t('trackRiskCount', { n: formatCount(summary.atRisk) }) : '')
@@ -2973,8 +3084,17 @@
             + escapeHtml(t(card.gate ? 'trackGatePassed' : 'trackGatePending')) + '</span>';
         const contractBadge = !contract ? ''
           : '<span class="live-tag ' + contract.cls + ' track-gate" title="' + escapeHtml(contractTitle) + '">' + escapeHtml(t(contract.key)) + '</span>';
+        // The grade sits first in the badge row because it is the one thing a
+        // reader is choosing by. The letter itself needs no translation, so the
+        // badge carries the letter and puts the sentence in its tooltip - a
+        // translated sentence inside a badge this small would be clipped, and a
+        // clipped sentence tells a reader less than a bare letter does.
+        const grade = trackGradeOf(card);
+        const gradeBadge = '<span class="live-tag track-grade ' + (TRACK_GRADE_CLASS[grade] || 'track-grade-d')
+          + '" title="' + escapeHtml(t(TRACK_GRADE_TAG[grade] || 'trackGradeD')) + '">' + escapeHtml(grade) + '</span>';
         return '<article class="track-card' + (risk ? ' risk' : '') + '">'
           + '<div class="track-card-head"><strong>' + escapeHtml((row ? row.symbol : wallet.symbol) || '?') + '</strong><span>'
+          + gradeBadge + ' '
           + '<span class="live-tag ' + tagClass + '">' + escapeHtml(t(tag)) + '</span> '
           + exitBadge + (exitBadge ? ' ' : '')
           + gateBadge + (gateBadge ? ' ' : '')

@@ -483,6 +483,15 @@ test('the board prints only the leads something has happened to, and reports the
   assert.deepEqual(body.track.map(row => row.symbol), ['T1'],
     'the crossed rung is printed; the quiet lead and the drained one are not');
   assert.equal(body.trackSummary.quiet, 2, 'and the board says how many leads it left out');
+  // The stored summary in this fixture carries no grade tally at all - the state
+  // a restart reads straight off a disk written by an older build. The header
+  // must still report the distribution of the rows it was actually sent, rather
+  // than the absence of a table nobody has rewritten yet.
+  assert.deepEqual(body.trackSummary.grades,
+    body.track.reduce((tally, row) => { tally[row.grade] = (tally[row.grade] || 0) + 1; return tally; },
+      { S: 0, A: 0, B: 0, C: 0, D: 0 }),
+    'the header tally counts the rows it was sent, not a stored summary');
+  for (const row of body.track) assert.ok(['S', 'A', 'B', 'C', 'D'].includes(row.grade), 'every row is graded');
 });
 
 // The pre-flight verdict, projected. The verdict maths has its own suite; what is
