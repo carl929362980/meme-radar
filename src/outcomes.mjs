@@ -89,6 +89,7 @@ export function sampleBoarded(outcomes, records, now, { providers = {}, limit = 
   let created = 0;
   let noPrice = 0;
   let unnamed = 0;
+  let already = 0;
   const awaiting = [];
   for (const { record, address } of rows) {
     if (existing + created >= ceiling) break;
@@ -102,7 +103,7 @@ export function sampleBoarded(outcomes, records, now, { providers = {}, limit = 
     }
     const providerName = providers?.[String(record?.source || 'market')];
     if (typeof providerName !== 'string' || !providerName) { unnamed++; continue; }
-    if (list.some(row => normalizeTokenAddress(row.chain || record.chain, row.address) === address)) continue;
+    if (list.some(row => normalizeTokenAddress(row.chain || record.chain, row.address) === address)) { already++; continue; }
     list.push({
       chain: record.chain,
       address,
@@ -119,7 +120,7 @@ export function sampleBoarded(outcomes, records, now, { providers = {}, limit = 
     });
     created++;
   }
-  return { created, boarded: rows.length, noPrice, unnamed, awaiting };
+  return { created, boarded: rows.length, noPrice, unnamed, already, awaiting };
 }
 
 export function selectOutcomeJobs(scopes, { enabledChains = [], provider = 'GMGN', limit = 0, now = Date.now() } = {}) {

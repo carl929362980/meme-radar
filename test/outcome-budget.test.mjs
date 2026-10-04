@@ -113,6 +113,7 @@ test('the boarded sampling frame measures every card the board printed', () => {
   assert.equal(report.noPrice, 1);
   assert.deepEqual(report.awaiting, [ca(3)]);
   assert.equal(report.unnamed, 0);
+  assert.equal(report.already, 0);
   assert.equal(outcomes.length, 2);
   // The cohort key the coverage table already counts, so these rows land in
   // `passed` instead of sitting in a cohort nobody reads.
@@ -124,6 +125,10 @@ test('the boarded sampling frame measures every card the board printed', () => {
   // re-stamp an existing baseline.
   const second = sampleBoarded(outcomes, board, AT, { providers: { feed: 'GMGN' } });
   assert.equal(second.created, 0);
+  // ...and says why: two rows it already holds, one with no price. Nothing is
+  // left uncounted.
+  assert.equal(second.already, 2);
+  assert.equal(second.noPrice, 1);
   assert.equal(outcomes.length, 2);
 });
 
@@ -140,7 +145,7 @@ test('a boarded row whose price came from a source nobody named is not measured'
   // An address this build cannot normalise is never keyed loosely.
   assert.deepEqual(sampleBoarded(outcomes, [{ chain: 'bsc', address: 'nope', source: 'feed',
     firstSeenAt: AT, snapshot: { at: AT, price: 1 } }], AT, { providers: { feed: 'GMGN' } }),
-  { created: 0, boarded: 0, noPrice: 0, unnamed: 0, awaiting: [] });
+  { created: 0, boarded: 0, noPrice: 0, unnamed: 0, already: 0, awaiting: [] });
   // And the frame is bounded, so a board that grows cannot grow the state file
   // without limit.
   const many = Array.from({ length: 10 }, (_, i) => ({ chain: 'bsc', address: ca(i + 1), source: 'feed',

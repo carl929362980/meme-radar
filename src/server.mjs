@@ -874,6 +874,7 @@ function publicOutcomeSummary(source = {}) {
       created: finite(source.boardedFrame?.created),
       noPrice: finite(source.boardedFrame?.noPrice),
       unnamed: finite(source.boardedFrame?.unnamed),
+      already: finite(source.boardedFrame?.already),
       priceRequests: finite(source.boardedFrame?.priceRequests)
     }
     ,coverage: Object.fromEntries(['passed', 'rejected'].map(cohort => [cohort,
