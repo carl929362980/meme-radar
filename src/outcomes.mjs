@@ -108,7 +108,12 @@ export function sampleBoarded(outcomes, records, now, { providers = {}, limit = 
       chain: record.chain,
       address,
       symbol: record?.symbol ?? null,
-      baselineAt: Number(record?.snapshot?.at) || Number(record?.firstSeenAt) || now,
+      // The clock starts when the price was taken, not when the card was first
+      // seen. A feed row is often priced minutes or hours after its first
+      // sighting - the board only learns the number when a read reaches it - and
+      // measuring "five minutes later" from a sighting that had no price yet
+      // would report an hours-long move as a five-minute one.
+      baselineAt: Number(record?.snapshot?.priceObservedAt) || Number(record?.snapshot?.at) || Number(record?.firstSeenAt) || now,
       baselinePrice: price,
       baselineProvider: providerName,
       initialDecision: 'X_REVIEW',

@@ -216,7 +216,12 @@ export function mergeTrackFlow(previous, incoming, now = Date.now()) {
 // anchor value is filled from the first sighting that carries it. This is bounded
 // to axes that have produced no signal yet, which is what keeps the "the
 // baseline a card shows is never silently rewritten" guarantee intact.
-function fillMissingBaselines(snapshot, seen, reached) {
+//
+// A price claimed this way is stamped with the moment it was actually learned
+// (`priceObservedAt`), because the outcome frame measures elapsed time from it.
+// Calling a reading that arrived hours after the first sighting a five-minute
+// baseline would file an hours-long move under a five-minute bucket.
+function fillMissingBaselines(snapshot, seen, reached, at) {
   for (const axis of AXES) {
     const current = snapshot[axis.field];
     if (current !== null && current !== undefined) continue;
@@ -224,6 +229,7 @@ function fillMissingBaselines(snapshot, seen, reached) {
     if (observed === null || observed === undefined) continue;
     if (Object.keys(reached || {}).some(id => id.startsWith(`${axis.key}:`))) continue;
     snapshot[axis.field] = observed;
+    if (axis.key === 'price' && Number.isFinite(at)) snapshot.priceObservedAt = at;
   }
   return snapshot;
 }
@@ -438,7 +444,7 @@ export function observeTracks(records, observations, now = Date.now(),
     // The anchor is copied, never mutated in place, so an already-published
     // record cannot change under a reader; then a sparse axis that was still
     // unobserved at the first sighting may claim its baseline from this one.
-    const snapshot = previous?.snapshot ? fillMissingBaselines({ ...previous.snapshot }, seen, previous.reached) : { ...seen, at: now };
+    const snapshot = previous?.snapshot ? fillMissingBaselines({ ...previous.snapshot }, seen, previous.reached, now) : { ...seen, at: now };
     const latest = { ...seen, at: now };
     const risk = mergeTrackRisk(previous?.risk, { risk: observation.risk, at: now });
     // The verdict is carried but never recomputed here. It is made where the risk

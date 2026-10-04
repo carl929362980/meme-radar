@@ -877,6 +877,7 @@ function publicOutcomeSummary(source = {}) {
       already: finite(source.boardedFrame?.already),
       priceRequests: finite(source.boardedFrame?.priceRequests)
     }
+    ,baselines: Object.fromEntries(Object.entries(source.baselines || {}).map(([name, count]) => [text(name, 24) || 'UNKNOWN', finite(count)]))
     ,coverage: Object.fromEntries(['passed', 'rejected'].map(cohort => [cohort,
       Object.fromEntries(['m5','m15','m30','h1','h2','h6','h24'].map(key => {
         const row = source.coverage?.[cohort]?.[key] || {};

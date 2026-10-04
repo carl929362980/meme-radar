@@ -132,6 +132,25 @@ test('the boarded sampling frame measures every card the board printed', () => {
   assert.equal(outcomes.length, 2);
 });
 
+test('a boarded row priced after its first sighting starts its clock when the price was taken', () => {
+  // A feed row is usually priced minutes or hours after the board first saw it -
+  // the number only exists once a read reaches it. Measuring "five minutes
+  // later" from the sighting would report an hours-long move as a five-minute
+  // one, so the late claim carries its own timestamp and the baseline uses it.
+  const late = [{ chain: 'bsc', address: ca(9), symbol: 'LATE', source: 'feed',
+    firstSeenAt: AT - 7_200_000, snapshot: { at: AT - 7_200_000, price: 0.5, priceObservedAt: AT - 60_000 } }];
+  const outcomes = [];
+  assert.equal(sampleBoarded(outcomes, late, AT, { providers: { feed: 'GMGN' } }).created, 1);
+  assert.equal(outcomes[0].baselinePrice, 0.5);
+  assert.equal(outcomes[0].baselineAt, AT - 60_000);
+
+  // A row priced at first sight keeps the sighting: no stamp, no late claim.
+  const fresh = [{ chain: 'bsc', address: ca(10), symbol: 'FRESH', source: 'feed',
+    firstSeenAt: AT - 60_000, snapshot: { at: AT - 60_000, price: 2 } }];
+  assert.equal(sampleBoarded(outcomes, fresh, AT, { providers: { feed: 'GMGN' } }).created, 1);
+  assert.equal(outcomes[1].baselineAt, AT - 60_000);
+});
+
 test('a boarded row whose price came from a source nobody named is not measured', () => {
   // A source left out of `providers` has no ruler to be measured with, so it
   // produces no baseline rather than an unmeasurable one.

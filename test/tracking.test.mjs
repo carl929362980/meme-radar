@@ -28,6 +28,19 @@ test('the first sighting fixes the anchor and later observations never rewrite i
   assert.equal(later[0].lastSeenAt, AT + 60_000);
 });
 
+test('a sparse axis is filled from the first sighting that carries it, and a late price is stamped with when it was learned', () => {
+  const blind = observeTracks([], [lead({ price: null })], AT);
+  assert.equal(blind[0].snapshot.price, null, 'an unread axis stays unread rather than becoming a zero');
+
+  const later = observeTracks(blind, [lead({ price: 0.0002 })], AT + 3_600_000);
+  assert.equal(later[0].snapshot.price, 0.0002, 'a missing baseline is not a reason to lose the axis for its whole life');
+  // The anchor is still the first sighting, but the number arrived an hour later
+  // and the outcome frame measures elapsed time from the number: calling this a
+  // five-minute baseline would file an hour-long move under a five-minute bucket.
+  assert.equal(later[0].snapshot.at, AT);
+  assert.equal(later[0].snapshot.priceObservedAt, AT + 3_600_000);
+});
+
 test('each price rung fires once and a recovery does not re-fire it', () => {
   let records = observeTracks([], [lead()], AT);
   records = observeTracks(records, [lead({ price: 0.0002 })], AT + 1000);

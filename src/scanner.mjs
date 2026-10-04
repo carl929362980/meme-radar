@@ -392,6 +392,16 @@ export function summarizeOutcomes(outcomes) {
     averageReturn2h: average('h2'),
     averageReturn24h: average('h24'),
     note: '影子验证，仅衡量筛选结果，不代表可成交收益'
+    // Which ruler priced each baseline. A baseline may only be measured by the
+    // provider that priced it, so this tally is what makes a provider's
+    // retirement visible: the rows it priced stop being measurable and stay
+    // counted - here, and as `missing` in the coverage below - instead of
+    // quietly leaving a table nobody re-reads.
+    ,baselines: rows.reduce((tally, item) => {
+      const name = typeof item?.baselineProvider === 'string' && item.baselineProvider ? item.baselineProvider : 'UNKNOWN';
+      tally[name] = (tally[name] || 0) + 1;
+      return tally;
+    }, {})
     ,coverage: outcomeCoverage(outcomes || [])
   };
 }
