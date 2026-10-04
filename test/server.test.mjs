@@ -188,38 +188,40 @@ function dispatch(server, { method = 'GET', pathName = '/', headers = {}, body =
   });
 }
 
-test('public request diagnostics preserve schema failures even with HTTP 200 and redact nonallowlisted fields', async () => {
+// Retiring AVE retired its raw transport log with it: what is published now is
+// the source-health roll-up - per-route arrival counts, how many routes did not
+// answer, and nothing that was inside an error object.
+test('public request diagnostics count every route arrival and loss, and redact anything not allowlisted', async () => {
   const raw = 'private_fixture https://invalid.example/?key=fixture_key';
-  const server = createServer({ settings, state: { value: { activeChain: 'bsc', status: 'RUNNING', candidates: [] } },
-    getMarketStatus: () => ({ transport: { recent: [
-      { at: 1_800_000_000_000, endpoint: 'trending', chain: 'bsc', category: 'schema', httpStatus: 200,
-        code: 'AVE_SCHEMA', message: raw, headers: { authorization: raw }, url: raw, raw },
-      { at: 1_800_000_000_001, endpoint: raw, chain: raw, category: raw, httpStatus: 500 }
-    ] } }) });
+  const state = { value: { activeChain: 'bsc', status: 'RUNNING', candidates: [],
+    sourceHealth: { discovery: { provider: 'GMGN', counts: { trending: 2, trenches: 1, [raw]: 9 }, failedRoutes: 1,
+      complete: false, checkedAt: 1_800_000_000_000,
+      trending: { ok: true, at: 1_800_000_000_000, error: raw, url: raw, headers: { authorization: raw } },
+      trenches: { ok: false, at: 1_800_000_000_001, error: raw, url: raw, headers: { authorization: raw } } } } } };
+  const server = createServer({ settings, state });
   const response = await dispatch(server, { pathName: '/api/status' });
   assert.equal(response.status, 200);
-  const recent = JSON.parse(response.body).aveMarket.transport.recent;
-  assert.equal(recent[0].category, 'schema'); assert.equal(recent[0].httpStatus, 200);
-  assert.equal(recent[1].category, 'unknown'); assert.equal(recent[1].endpoint, 'unknown'); assert.equal(recent[1].chain, '');
-  assert.doesNotMatch(JSON.stringify(recent), /private_fixture|fixture_key|invalid\.example|authorization|headers|https?:|"raw"/);
+  const body = JSON.parse(response.body);
+  const discovery = body.sourceHealth.discovery;
+  assert.equal(discovery.provider, 'GMGN');
+  assert.equal(discovery.routes.trending, 2); assert.equal(discovery.routes.trenches, 1);
+  assert.equal(discovery.failedRoutes, 1, 'a route that did not answer is a number, not a silence');
+  assert.equal(discovery.complete, false);
+  assert.equal(Object.hasOwn(discovery.routes, raw), false, 'a route name is allowlisted, not echoed');
+  assert.equal(discovery.trending.ok, true); assert.equal(discovery.trenches.ok, false);
+  assert.equal(Object.hasOwn(body, 'aveMarket'), false);
+  assert.doesNotMatch(JSON.stringify(body.sourceHealth), /private_fixture|fixture_key|invalid\.example|authorization|https?:|"raw"/);
 });
 
-test('AVE configuration is local-only, requires same-origin JSON and never opens trading routes', async () => {
-  let calls = 0;
-  const snapshot = { data: { configured: true }, trade: { configured: false }, executionReady: false };
-  const server = createServer({ settings, state: { value: {} }, ave: { snapshot: () => snapshot, configure: async () => { calls++; return snapshot; }, remove: () => { calls++; return snapshot; } } });
-  for (const pathName of ['/api/ave-configure', '/api/ave-remove']) {
-    assert.equal((await dispatch(server, { method: 'POST', pathName, body: '{}' })).status, 403);
-    assert.equal((await dispatch(server, { method: 'POST', pathName, headers: { origin: 'https://evil.invalid', 'content-type': 'application/json' }, body: '{}' })).status, 403);
-    assert.equal((await dispatch(server, { method: 'POST', pathName, headers: { origin: 'http://127.0.0.1:3791', 'content-type': 'text/plain' }, body: '{}' })).status, 415);
+test('the retired AVE configuration routes are gone, and no trading route was ever opened', async () => {
+  const server = createServer({ settings, state: { value: {} } });
+  for (const pathName of ['/api/ave-configure', '/api/ave-remove', '/api/ave-status', '/api/ave-submit']) {
+    for (const method of ['GET', 'POST']) {
+      const result = await dispatch(server, { method, pathName, headers: { origin: 'http://127.0.0.1:3791', 'content-type': 'application/json' }, body: '{}' });
+      assert.notEqual(result.status, 200, pathName + ' ' + method + ' must not be served');
+      assert.doesNotMatch(JSON.stringify(result.body), /configured|executionReady/);
+    }
   }
-  assert.equal(calls, 0);
-  const response = await dispatch(server, { method: 'POST', pathName: '/api/ave-configure', headers: { origin: 'http://127.0.0.1:3791', 'content-type': 'application/json' }, body: JSON.stringify({ key: 'fixture-not-real' }) });
-  assert.equal(response.status, 200); assert.equal(calls, 1);
-  assert.equal(JSON.parse(response.body).ave.configured, true);
-  assert.equal(JSON.parse(response.body).ave.executionReady, false);
-  const trading = await dispatch(server, { method: 'POST', pathName: '/api/ave-submit', headers: { origin: 'http://127.0.0.1:3791' } });
-  assert.equal(trading.status, 405);
 });
 
 test('HTTP handler enforces local boundary, strong CSP and only safe local configuration writes', async () => {

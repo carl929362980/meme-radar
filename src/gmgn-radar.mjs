@@ -201,7 +201,7 @@ export class GmgnRadarSource {
       // projection can say so instead of showing an empty table.
       recovery: { auditAllowed: false },
       nextAllowedAt: this.nextAllowedAt,
-      pauseCode: this.client?.cooling?.() ? 'GMGN_COOLING' : null,
+      pauseCode: this.client?.cooling?.() ? 'SOURCE_COOLING' : null,
       requests: Number(health.requests) || 0,
       ok: Number(health.ok) || 0,
       failed: Number(health.failed) || 0,

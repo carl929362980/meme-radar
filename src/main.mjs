@@ -2,8 +2,7 @@
 import { config, ROOT } from './config.mjs';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { AveClient } from './ave.mjs';
-import { createAveSettings } from './ave-settings.mjs';
+import { GmgnRadarSource } from './gmgn-radar.mjs';
 import { RadarState } from './state.mjs';
 import { Scanner } from './scanner.mjs';
 import { DexBatchMarketOverlay, SecondaryValidator } from './secondary.mjs';
@@ -39,19 +38,23 @@ if (process.platform === 'win32') {
 
 const state = new RadarState(config.stateDir);
 let scanner;
-// Production discovery deliberately performs one hot-list read per turn. The
-// current AVE head response already carries the card fields; pagination and
-// automatic per-token completion must not amplify a shared-key rate limit.
+// Production discovery performs one read per route per turn. Neither route
+// answers a windowed volume counter, and neither paginates, so a single sample
+// per cycle is the whole budget - and it is spent on the only ordering that
+// returns pools young enough to matter.
 const sharedRequestIntervalMs = 5 * 60_000;
-const market = new AveClient({ directory: config.stateDir, apiKeyProvider: () => ave.getKey(), enrichLimit: 0,
-  maxTrendingPages: 1, rotateTrendingPages: true, minimumGapMs: sharedRequestIntervalMs });
-const ave = createAveSettings({ directory: config.stateDir,
-  verifyData: (key, options) => market.verifyApiKey(key, options),
-  onChange: () => { market.resetCredentials(); scanner?.requestCycle(); }
-});
-// Keep old history and credentials on disk, but never reuse a previous
-// provider's pass or an unlabelled baseline as current AVE evidence.
-if (state.value.scanProvider !== 'AVE') {
+// GMGN is the only discovery source. AVE is retired: it paced itself by
+// sleeping inside its request lane - `lane.nextStart` was `now + spacing()`,
+// and `spacing` had climbed to its fifteen-minute ceiling - so one discovery
+// read could hold an entire scan cycle open. Measured 2026-10-04: `lastCycleMs`
+// 903544 against a previous cycle of 2645 ms, with `scanInProgress` stuck true
+// and the outcome read-back never reached.
+const market = new GmgnRadarSource({ settings: config, chains: config.supportedChains });
+// Keep old history on disk, but never reuse a previous provider's pass or an
+// unlabelled baseline as current evidence. Baselines already priced are left
+// exactly as they are - a row is never re-labelled to make it measurable, and
+// the rows this source cannot read back are counted rather than dropped.
+if (state.value.scanProvider !== 'GMGN') {
   for (const scope of [state.value, ...Object.values(state.value.chainStates || {})]) {
     for (const row of scope.outcomes || []) row.baselineProvider ||= 'LEGACY_UNKNOWN';
     for (const row of scope.candidates || []) {
@@ -59,18 +62,15 @@ if (state.value.scanProvider !== 'AVE') {
       if (row.status === 'X_REVIEW') {
         row.status = 'WAIT_RECHECK'; row.staleAt = 0;
         row.deep = { ...row.deep, chainPass: false };
-        row.decisionReason = '已切换 AVE，等待新来源核验';
+        row.decisionReason = '已切换发现来源，等待新来源核验';
       }
     }
     scope.sourceHealth = {}; scope.retryAt = 0;
   }
-  state.value.scanProvider = 'AVE'; state.save();
+  state.value.scanProvider = 'GMGN'; state.save();
 }
 const controls = new RadarControls(config.stateDir, config.supportedChains, state.value.activeChain || config.chain);
-// The signal channel runs beside the AVE pipeline rather than inside it. The two
-// sources disagree on scale - on the same pool their liquidity readings differ by
-// up to 5x - so letting these rows ride the AVE pipeline under AVE's field names
-// would have the change-rate maths quietly comparing two different rulers.
+// The signal channel: wallet clusters from the smart-money and KOL trade feeds.
 // It builds only when a key is present, so a stock install is unchanged.
 // Declared before the scanner because the scanner is handed it as its second
 // tracking source below.
@@ -84,12 +84,17 @@ scanner = new Scanner({ provider: market,
     ? new GoPlusReader({ timeoutMs: config.goplusTimeoutMs, cacheMs: config.goplusCacheMs, maxPerCycle: config.goplusLookupsPerCycle })
     : null,
   state, controls, sharedRequestIntervalMs,
-  // The tracking board's second source. The market hot list carries no pool
-  // younger than an hour, so without this channel the board would be blind to
-  // exactly the population this product exists to watch — and to the wallet
-  // clusters that only the trade feed can see.
-  feed: signals
+  // The tracking board's second source. The discovery routes report a pool's
+  // market facts but not the wallets behind it, so without this channel the
+  // board would be blind to the clusters that only the trade feed can see.
+  feed: signals,
+  // Read-back is answered by the same provider that supplies discovery, which
+  // is also the provider that priced every baseline this build writes. One
+  // curve, one ruler.
+  outcomeProvider: market.client, outcomeProviderName: 'GMGN'
 });
+// The page's radar reads the scanner's cache and never pays for a read of its
+// own; the source refreshes itself on its own clock inside that read.
 const liveDiscovery = new LiveDiscovery({ provider: market, cacheOnly: true, marketOverlay: new DexBatchMarketOverlay() });
 const version = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
 
@@ -100,7 +105,6 @@ if (once) {
 }
 
 const server = createServer({
-  ave,
   state,
   controls,
   liveDiscovery,
@@ -109,7 +113,6 @@ const server = createServer({
   settings: { ...config, version },
   supportedChains: config.supportedChains,
   switchChain: chain => scanner.switchChain(chain),
-  getAveConnection: () => ave.snapshot(),
   getSchedulerStatus: chain => scanner.scheduleSnapshot(chain),
   getMarketStatus: () => market.snapshot()
 });
@@ -128,7 +131,7 @@ let closing = false;
 function shutdown() {
   if (closing) return;
   closing = true; scanner.stop(); liveDiscovery.stop(); signals?.stop();
-  market.resetCredentials({ disabled: true });
+  market.resetCredentials();
   server.close(() => process.exit(0));
   server.closeIdleConnections();
 }

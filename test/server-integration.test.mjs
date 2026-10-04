@@ -4,8 +4,7 @@ import { Readable } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { createServer, healthSnapshot } from '../src/server.mjs';
-import { AveError, createAveSettings } from '../src/ave-settings.mjs';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import http from 'node:http';
@@ -23,95 +22,6 @@ function dispatch(server, path, { method = 'POST', body = {}, extraHeaders = {} 
   });
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
-
-test('AVE connection errors preserve only allowlisted codes and bounded future retry times', async () => {
-  const future = Date.now() + 60_000, privateMessage = 'fixture-private-key https://private.invalid/?key=fixture-private-key';
-  for (const code of ['AVE_WAIT', 'AVE_HOURLY_BUDGET', 'AVE_TOTAL_BUDGET', 'AVE_DISCOVERY_RESERVE', 'AVE_NETWORK', 'AVE_UPSTREAM']) {
-    const error = Object.assign(new AveError(code, privateMessage, code === 'AVE_NETWORK' || code === 'AVE_UPSTREAM' ? 502 : 429),
-      { retryAt: future, headers: { authorization: privateMessage } });
-    const server = createServer({ settings, state: { value: {} }, ave: {
-      snapshot: () => ({ configured: true, data: { status: 'error', code, retryAt: future, message: privateMessage } }),
-      configure: async () => { throw error; }
-    } });
-    const result = await dispatch(server, '/api/ave-configure');
-    assert.equal(result.status, error.status); assert.equal(result.body.error, code);
-    assert.equal(result.body.retryAt, future); assert.equal(result.body.ave.data.retryAt, future);
-    assert.equal(result.body.ave.data.code, code);
-    assert.doesNotMatch(JSON.stringify(result.body), /fixture-private-key|private\.invalid|authorization|headers/);
-  }
-  for (const retryAt of [-1, 0, Date.now() - 60_000, Date.now() + 367 * 86400000, Infinity, NaN, String(future), {}, null]) {
-    const server = createServer({ settings, state: { value: {} }, ave: {
-      snapshot: () => ({ configured: true, data: { status: 'error', code: 'AVE_WAIT', retryAt } }),
-      configure: async () => { throw Object.assign(new AveError('AVE_WAIT', privateMessage, 429), { retryAt }); }
-    } });
-    const result = await dispatch(server, '/api/ave-configure');
-    assert.equal(result.body.retryAt, null); assert.equal(result.body.ave.data.retryAt, null);
-  }
-  const server = createServer({ settings, state: { value: {} }, ave: {
-    snapshot: () => ({ configured: true, data: { status: 'error', code: privateMessage, retryAt: future } }),
-    configure: async () => { throw Object.assign(new Error(privateMessage), { code: privateMessage, retryAt: future }); }
-  } });
-  const result = await dispatch(server, '/api/ave-configure');
-  assert.equal(result.body.error, 'AVE_STORAGE'); assert.equal(result.body.retryAt, null);
-  assert.equal(result.body.ave.data.code, null); assert.equal(result.body.ave.data.retryAt, null);
-  assert.doesNotMatch(JSON.stringify(result.body), /fixture-private-key|private\.invalid/);
-});
-
-test('normal API configure uploads succeed, but disconnected clients cannot commit a late verification', { timeout: 10_000 }, async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'radar-http-cancel-'));
-  let clock = Date.now(), mode = 'ok', release, began, done, observedSignal, changes = 0;
-  const started = new Promise(resolve => { began = resolve; });
-  const completed = new Promise(resolve => { done = resolve; });
-  const actual = createAveSettings({ directory, now: () => clock,
-    verifyData: async (_key, { signal } = {}) => {
-      if (mode === 'pending') {
-        observedSignal = signal;
-        await new Promise(resolve => { release = resolve; began(); }); // Deliberately ignore cancellation until released.
-      }
-      return { connected: true };
-    }, onChange: () => { changes++; } });
-  const localSettings = { ...settings, port: 0 };
-  const server = createServer({ settings: localSettings, state: { value: {} }, ave: {
-    snapshot: actual.snapshot,
-    configure: (...args) => actual.configure(...args).finally(() => { if (mode === 'pending') done(); })
-  } });
-  let client;
-  try {
-    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
-    localSettings.port = server.address().port;
-    const url = 'http://127.0.0.1:' + localSettings.port + '/api/ave-configure';
-    const localHeaders = { ...headers, origin: 'http://127.0.0.1:' + localSettings.port };
-    const normal = await new Promise((resolve, reject) => {
-      const req = http.request(url, { method: 'POST', headers: localHeaders }, res => {
-        let body = ''; res.setEncoding('utf8'); res.on('data', chunk => { body += chunk; });
-        res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(body) }));
-      });
-      req.once('error', reject); req.end(JSON.stringify({ key: 'normal-fixture-key' }));
-    });
-    assert.equal(normal.status, 200); assert.equal(normal.body.ave.data.status, 'connected');
-    assert.equal(actual.getKey(), 'normal-fixture-key'); assert.equal(changes, 1);
-    clock += 61_000; mode = 'pending';
-    let unexpectedResponse = false;
-    client = http.request(url, { method: 'POST', headers: localHeaders }, res => { unexpectedResponse = true; res.resume(); });
-    client.on('error', () => {}); client.end(JSON.stringify({ key: 'cancelled-fixture-key' }));
-    await started;
-    assert.ok(observedSignal instanceof AbortSignal);
-    assert.equal(observedSignal.aborted, false, 'a complete normal upload is not cancellation');
-    const cancelled = new Promise(resolve => observedSignal.addEventListener('abort', resolve, { once: true }));
-    client.destroy(); await cancelled;
-    release(); await completed; await tick();
-    assert.equal(actual.getKey(), 'normal-fixture-key'); assert.equal(changes, 1);
-    assert.equal(unexpectedResponse, false);
-    assert.equal(JSON.parse(readFileSync(join(directory, 'ave-credentials.json'), 'utf8')).key, 'normal-fixture-key');
-    clock += 61_000; mode = 'ok';
-    await actual.configure({ key: '' }); // Cancelled operations must release busy state.
-    assert.equal(changes, 2);
-  } finally {
-    client?.destroy(); release?.(); server.closeAllConnections();
-    await new Promise(resolve => server.close(resolve));
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
 
 test('status exposes allowlisted shared scheduling and market-only screening without refreshing evidence', async () => {
   const now = Date.now(), next = now + 600_000, observedAt = now - 120_000;
@@ -153,25 +63,25 @@ test('disabled deep-review endpoint refuses before reading a snapshot or accepti
   assert.equal(result.status, 409); assert.deepEqual(result.body, { accepted: false, reason: 'deep_audit_disabled' });
 });
 
-test('selected-chain timers inherit current global AVE cooldown without changing old success time', async () => {
+test('selected-chain timers inherit the current shared provider cooldown without changing old success time', async () => {
   const now = Date.now(), retry = now + 500000;
   const server = createServer({ settings, state: { value: { activeChain: 'bsc', status: 'RUNNING',
     chainStates: { sol: { status: 'RATE_LIMITED', retryAt: now - 5000, nextCycleAt: now - 5000, lastSuccessAt: now - 1200000 } } } },
-    getMarketStatus: () => ({ nextAllowedAt: retry, pauseCode: 'AVE_RATE_LIMITED', recovery: { active: true, headOnly: true, auditAllowed: false } }) });
+    getMarketStatus: () => ({ provider: 'GMGN', nextAllowedAt: retry, pauseCode: 'SOURCE_COOLING' }) });
   const { status, body } = await dispatch(server, '/api/status?chain=sol', { method: 'GET' });
   assert.equal(status, 200); assert.equal(body.retryAt, retry); assert.equal(body.nextCycleAt, retry);
   assert.equal(body.status, 'RATE_LIMITED'); assert.equal(body.lastSuccessAt, now - 1200000);
-  assert.equal(body.aveMarket.recovery.auditAllowed, false);
+  assert.equal(body.market.pauseCode, 'SOURCE_COOLING'); assert.equal(body.market.nextAllowedAt, retry);
 });
 
 test('an expired per-chain rate status is not shown as a current provider-wide wait', async () => {
   const now = Date.now();
   const server = createServer({ settings, state: { value: { activeChain: 'bsc', status: 'RUNNING',
     chainStates: { sol: { status: 'RATE_LIMITED', retryAt: now - 5000, nextCycleAt: now - 5000, lastSuccessAt: now - 1200000 } } } },
-    getMarketStatus: () => ({ nextAllowedAt: 0, pauseCode: null, recovery: { active: true, headOnly: false, auditAllowed: false } }) });
+    getMarketStatus: () => ({ provider: 'GMGN', nextAllowedAt: 0, pauseCode: null }) });
   const { status, body } = await dispatch(server, '/api/status?chain=sol', { method: 'GET' });
   assert.equal(status, 200); assert.equal(body.status, 'DEGRADED'); assert.equal(body.retryAt, 0);
-  assert.equal(body.lastSuccessAt, now - 1200000); assert.equal(body.aveMarket.recovery.headOnly, false);
+  assert.equal(body.lastSuccessAt, now - 1200000); assert.equal(body.market.pauseCode, null);
 });
 
 test('disabled and expired chain views never expose a historical RUNNING state', async () => {
@@ -225,7 +135,7 @@ test('public status and export omit unsupported legacy Arc and Stable scopes', a
   assert.equal(status.status, 200);
   assert.deepEqual(status.body.supportedChains, supportedChains);
   assert.deepEqual(status.body.scheduler.enabledChains, supportedChains);
-  assert.deepEqual(Object.keys(status.body.aveMarket.chains), supportedChains);
+  assert.equal(status.body.market.provider, 'GMGN'); assert.equal(status.body.market.readonly, true);
   assert.deepEqual(Object.keys(status.body.coverage), supportedChains);
   assert.deepEqual(Object.keys(status.body.annotations), ['keep']);
   assert.deepEqual(status.body.events.map(event => event.chain), ['bsc', '']);
@@ -294,68 +204,36 @@ test('update errors expose fixed codes only and never request shutdown', async (
   await tick(); assert.equal(closed, 0);
 });
 
-test('status adds AVE market budget and safe connection fields, fixed health version and no production GMGN mutations', async () => {
+// The market block is a whitelist: only the cooldown and the request tallies
+// leave the process. GMGN publishes no daily or hourly quota, so the projection
+// must not print one rather than invent it.
+test('status adds the shared provider cooldown and request tallies, fixed health version and no production GMGN mutations', async () => {
   const secret = 'raw-private-fixture';
+  const coolingUntil = Date.now() + 500_000;
   const server = createServer({ settings, state: { value: { version: 987, status: 'RUNNING' } },
-    getAveConnection: () => ({ configured: true, key: secret, data: { status: 'connected', checkedAt: 42, message: secret } }),
-    getMarketStatus: () => ({ dailyLimit: 2000, totalLimit: 1000000, hourlyLimit: 1250, manualResetRequired: false, nextAllowedAt: 100, pending: 2, pauseCode: 'AVE_HOURLY_BUDGET', key: secret, discoveryReserveCu: 800, nonTrendingPausedUntil: 999,
-      metrics: { requests: 3, estimatedCu: 11, key: secret, byKind: { klines: { requests: 1, estimatedCu: 10, key: secret }, secret: { key: secret } } },
-      transport: { spacingMs: 4000, strikes: 1, last429At: 88, active: false, key: secret,
-        recent: [{ at: 88, endpoint: 'pair', chain: 'bsc', httpStatus: 429, category: 'rate', retryAt: 1000, retryAfterMs: 60000, startGapMs: 2200, durationMs: 200, body: secret, headers: { key: secret } }] },
-      budget: { day: '2026-09-21', used: 11, remaining: 1989, totalUsed: 2011, totalRemaining: 997989, hourUsed: 11, hourRemaining: 1239, periodStartedAt: 100, legacyUsageIncluded: true, legacySnapshot: { key: secret }, nonTrendingRemaining: 1189, fingerprint: secret },
-      chains: { bsc: { state: 'observed', documented: true, apiChain: secret }, secret: { state: secret } } }) });
+    getMarketStatus: () => ({ provider: 'GMGN', enabled: true, nextAllowedAt: coolingUntil, pauseCode: 'SOURCE_COOLING', key: secret,
+      requests: 7, ok: 5, failed: 1, throttled: 1, banned: 0, lastOkAt: 42, lastErrorCode: secret,
+      budget: { remaining: secret }, chains: { bsc: { apiChain: secret } } }) });
   const status = await dispatch(server, '/api/status', { method: 'GET' });
-  assert.equal(status.body.scanProvider, 'AVE'); assert.equal(status.body.aveConnection.data.status, 'connected');
-  assert.equal(status.body.aveMarket.metrics.estimatedCu, 11); assert.equal(status.body.aveMarket.budget.remaining, 1989);
-  assert.equal(status.body.aveMarket.metrics.scope, 'session'); assert.equal(status.body.aveMarket.metrics.byKind.klines.estimatedCu, 10);
-  assert.equal(status.body.aveMarket.discoveryReserveCu, 800); assert.equal(status.body.aveMarket.budget.nonTrendingRemaining, 1189);
-  assert.equal(status.body.aveMarket.totalLimit, 1000000); assert.equal(status.body.aveMarket.hourlyLimit, 1250);
-  assert.equal(status.body.aveMarket.budget.totalRemaining, 997989); assert.equal(status.body.aveMarket.budget.hourRemaining, 1239);
-  assert.equal(status.body.aveMarket.budget.legacyUsageIncluded, true); assert.equal(status.body.aveMarket.budget.legacySnapshot, undefined);
-  assert.equal(status.body.aveMarket.pauseCode, 'AVE_HOURLY_BUDGET');
-  assert.equal(status.body.aveMarket.transport.spacingMs, 4000);
-  assert.equal(status.body.aveMarket.transport.recent[0].category, 'rate');
-  assert.equal(status.body.aveMarket.transport.recent[0].body, undefined);
-  assert.equal(status.body.aveMarket.chains.bsc.apiChain, 'bsc'); assert.equal(status.body.aveMarket.readonly, true);
-  assert.equal(status.body.aveConnection.executionReady, false); assert.doesNotMatch(JSON.stringify(status), /raw-private-fixture|fingerprint/);
+  assert.equal(status.body.scanProvider, 'GMGN');
+  assert.equal(status.body.market.provider, 'GMGN'); assert.equal(status.body.market.readonly, true);
+  assert.equal(status.body.market.pauseCode, 'SOURCE_COOLING'); assert.equal(status.body.market.nextAllowedAt, coolingUntil);
+  assert.equal(status.body.market.requests, 7); assert.equal(status.body.market.failed, 1);
+  assert.equal(status.body.market.lastOkAt, 42);
+  assert.equal(Object.hasOwn(status.body.market, 'budget'), false, 'no quota this provider does not publish');
+  assert.equal(Object.hasOwn(status.body.market, 'chains'), false);
+  assert.equal(Object.hasOwn(status.body, 'aveConnection'), false);
+  assert.equal(Object.hasOwn(status.body, 'aveMarket'), false);
+  assert.equal(status.body.status, 'RATE_LIMITED', 'a cooldown that has not elapsed is still a wait');
+  assert.doesNotMatch(JSON.stringify(status), /raw-private-fixture|fingerprint/);
   assert.equal((await dispatch(server, '/health', { method: 'GET' })).body.version, '0.1.8');
   assert.equal(healthSnapshot({ version: '9.9.9' }, settings).version, '0.1.8');
   assert.equal((await dispatch(server, '/api/gmgn-onboarding', { body: { regenerate: false } })).status, 405);
   assert.equal((await dispatch(server, '/api/gmgn-disconnect')).status, 405);
   assert.equal((await dispatch(server, '/api/gmgn-key', { body: { apiKey: 'fixture-key' } })).status, 405);
+  assert.notEqual((await dispatch(server, '/api/ave-configure', { body: { key: 'fixture-key' } })).status, 200);
+  assert.notEqual((await dispatch(server, '/api/ave-status', { method: 'GET' })).status, 200);
   assert.equal(Object.hasOwn(status.body, 'gmgnConnection'), false);
-});
-
-test('injected Data verifier is shared, serialized and cannot leak key or rescue failures via Trade', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'radar-ave-injected-'));
-  let clock = 1000, reply = 'ok', release;
-  const calls = [], changes = [];
-  try {
-    const ave = createAveSettings({ directory, now: () => clock, fetchImpl: () => assert.fail('injected verifier must be used'),
-      verifyData: async key => {
-        calls.push(key);
-        if (reply === 'pending') await new Promise(resolve => { release = resolve; });
-        if (reply === 'failure') throw Object.assign(new Error(key), { code: 'AVE_AUTH' });
-        if (reply === 'rate') throw Object.assign(new Error(key), { code: 'AVE_RATE_LIMITED' });
-        if (reply === 'false') return false;
-        return { connected: true, key, message: key };
-      }, onChange: change => { changes.push({ ...change, stored: JSON.parse(readFileSync(join(directory, 'ave-credentials.json'))).key }); } });
-    await ave.configure({ key: 'old-fixture-key' });
-    assert.equal(ave.getKey(), 'old-fixture-key'); assert.equal(changes[0].stored, 'old-fixture-key');
-    assert.doesNotMatch(JSON.stringify(ave.snapshot()), /old-fixture-key/);
-    clock += 61000; reply = 'failure';
-    await assert.rejects(ave.configure({ key: 'new-fixture-key' }), error => error.code === 'AVE_AUTH' && !error.message.includes('new-fixture-key'));
-    assert.equal(ave.getKey(), 'old-fixture-key'); assert.equal(changes.length, 1);
-    clock += 61000; reply = 'false'; await assert.rejects(ave.configure({ key: '' }), { code: 'AVE_SCHEMA' });
-    clock += 61000; reply = 'rate'; await assert.rejects(ave.configure({ key: '' }), { code: 'AVE_RATE_LIMIT' });
-    const count = calls.length; await assert.rejects(ave.configure({ key: '' }), { code: 'AVE_COOLDOWN' }); assert.equal(calls.length, count);
-    clock += 61000; reply = 'pending'; const pending = ave.configure({ key: '' });
-    await assert.rejects(ave.configure({ key: '' }), { code: 'AVE_BUSY' }); assert.throws(() => ave.remove({}), { code: 'AVE_BUSY' });
-    release(); await pending;
-    const server = createServer({ settings, state: { value: {} }, ave });
-    const removed = await dispatch(server, '/api/ave-remove');
-    assert.equal(removed.status, 200); assert.equal(ave.getKey(), ''); assert.equal(changes.at(-1).reason, 'removed');
-  } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
 // The tracking board's wallet-flow channel, projected. The engine's own tests

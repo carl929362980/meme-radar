@@ -78,171 +78,33 @@ test('performance and event panels are removed together with their render hooks;
   assert.match(html, /renderLive\(\)/);
 });
 
-test('AVE opens token chart/trading with the author referral and never substitutes the pool or source URL', () => {
-  const start = html.indexOf('const AVE_INVITE_URL =');
+// AVE is retired. The card now opens a neutral public chart: no referral, no
+// order route, and the pool or source URL a row arrives with is never
+// substituted into the link.
+test('卡片只打开公共行情页，不替换池子或来源，也不带推广参数', () => {
+  const start = html.indexOf('const EXPLORER_SLUGS =');
   const end = html.indexOf('function candidateRow', start);
-  const context = { t: key => key, escapeHtml: value => String(value).replaceAll('&', '&amp;'), safeUrl: () => '', officialXHandle: () => '' };
-  vm.runInNewContext(html.slice(start, end) + ';this.links = actionLinks;this.tokenUrl = aveTokenUrl;', context);
-  for (const chain of ['bsc', 'eth', 'base', 'robinhood', 'sol']) {
-    const address = chain === 'sol' ? 'So11111111111111111111111111111111111111112' : '0x059ecb64e45b6211f1390d5f28cc909203ca7777';
+  const context = { t: key => key, encodeURIComponent,
+    escapeHtml: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'),
+    safeUrl: () => '', officialXHandle: () => '' };
+  vm.runInNewContext(html.slice(start, end) + ';this.links = actionLinks;this.tokenUrl = explorerUrl;', context);
+  const sol = 'So11111111111111111111111111111111111111112';
+  const evm = '0x059ecb64e45b6211f1390d5f28cc909203ca7777';
+  for (const [chain, address, slug] of [['sol', sol, 'solana'], ['bsc', evm, 'bsc'], ['ethereum', evm, 'ethereum']]) {
     const links = context.links({ chain, address, pairAddress: 'wrong-pool', gmgnUrl: 'https://gmgn.ai/override' });
-    assert.ok(links.includes('https://pro.ave.ai/token/' + address + '-' + (chain === 'sol' ? 'solana' : chain) + '?ref=0001'));
-    assert.ok(links.includes('aveTrade')); assert.doesNotMatch(links, /wrong-pool/);
-    assert.match(links, /data-action="copy"/); assert.doesNotMatch(links, /gmgn.ai/);
+    assert.ok(links.includes('https://dexscreener.com/' + slug + '/' + address), chain + ' 应打开公共行情页');
+    assert.doesNotMatch(links, /wrong-pool/, chain + ' 的池子不得进入链接');
+    assert.doesNotMatch(links, /[?&]ref=/, '链接不带推广参数');
+    assert.match(links, /data-action="copy"/);
+    assert.match(links, /noopener noreferrer/);
   }
-  for (const row of [{ chain:'unknown',address:'0x059ecb64e45b6211f1390d5f28cc909203ca7777' },
-    { chain:'arc',address:'0x059ecb64e45b6211f1390d5f28cc909203ca7777' },
-    { chain:'stable',address:'0x059ecb64e45b6211f1390d5f28cc909203ca7777' },
-    { chain:'bsc',address:'not-a-ca' }, { chain:'bsc',address:'0x059ecb64e45b6211f1390d5f28cc909203ca7777?ref=evil' }]) {
-    assert.equal(context.tokenUrl(row.chain,row.address), null);
-    assert.match(context.links(row), /https:\/\/share\.ave\.ai\?lang=zh-cn&amp;code=0001/);
-    assert.doesNotMatch(context.links(row), /pro\.ave\.ai/);
+  // 未知链或非法地址：不给链接，回落到公共站点首页，而不是指向某个别的池子。
+  for (const row of [{ chain: 'unknown', address: evm }, { chain: 'robinhood', address: evm },
+    { chain: 'bsc', address: 'not-a-ca' }, { chain: 'bsc', address: evm + '?ref=evil' }]) {
+    assert.equal(context.tokenUrl(row.chain, row.address), null);
+    assert.match(context.links(row), /href="https:\/\/dexscreener\.com"/);
   }
-  assert.match(html, /id="ave-api-key"[^>]*type="password"/);
-  assert.doesNotMatch(html, /ave-data-key|ave-trade-key|data-ave-kind/);
-  const connector = html.slice(html.indexOf('let aveBusy'), html.indexOf('async function refresh()'));
-  assert.doesNotMatch(connector, /localStorage|sessionStorage|window.open|privateKey|signTransaction/);
-});
-
-test('AVE failed retest updates the Data badge while retaining the failure notice and saved-key summary', async () => {
-  const elements = Object.fromEntries(['ave-api-key', 'ave-config-status', 'ave-data-status', 'aveSummary', 'aveSettings']
-    .map(id => [id, { dataset: {}, textContent: '', value: '' }]));
-  const context = {
-    byId: id => elements[id], t: key => key,
-    document: { querySelectorAll: () => [] }, AbortSignal,
-    fetch: async () => ({ ok: false, json: async () => ({ error: 'AVE_AUTH',
-      ave: { configured: true, data: { configured: true, status: 'error' }, trade: { configured: false, status: 'disabled' } } }) }),
-  };
-  vm.runInNewContext(html.slice(html.indexOf('let aveBusy'), html.indexOf('async function refresh()'))
-    + ';this.change = changeAve;this.render = renderAveConnection;', context);
-  context.render({ configured: true, data: { status: 'connected' } });
-  assert.equal(elements['ave-data-status'].textContent, 'aveChecked');
-  await context.change('configure');
-  assert.equal(elements['ave-data-status'].textContent, 'aveFailed');
-  assert.equal(elements['aveSummary'].textContent, ' · aveKeySaved');
-  assert.match(elements['ave-config-status'].textContent, /AVE_AUTH/);
-});
-
-const AVE_UI_AT = Date.UTC(2026, 8, 30, 12);
-function aveConnectionHarness(fetch) {
-  const elements = Object.fromEntries(['ave-api-key', 'ave-config-status', 'ave-data-status', 'aveSummary',
-    'aveSettings', 'languageSelect', 'notice'].map(id => [id, { dataset: {}, textContent: '', value: '',
-    getAttribute(name) { return name === 'data-i18n' ? this.dataset.i18n : undefined; }, setAttribute() {} }]));
-  const buttons = [{ disabled: false }, { disabled: false }];
-  const saved = { configured: true, data: { configured: true, status: 'connected' } };
-  const context = { fetch, AbortSignal, currentLocale: 'zh-CN', supportedLocales: ['zh-CN', 'en'],
-    Date: class extends Date { static now() { return AVE_UI_AT; } },
-    byId: id => elements[id], formatClock: value => 'clock:' + value,
-    document: { documentElement: {}, querySelectorAll(selector) {
-      if (selector === '.ave-settings button') return buttons;
-      if (selector === '[data-i18n]') return Object.values(elements).filter(element => element.dataset.i18n);
-      return [];
-    } },
-    writeStorage() {}, window: { dispatchEvent() {} }, CustomEvent: class {},
-    renderChainSwitcher() {}, renderTelemetry() {}, lastData: { aveConnection: saved },
-    refresh() {},
-  };
-  context.t = (key, args) => context.currentLocale + ':' + key + (args ? ':' + JSON.stringify(args) : '');
-  context.render = data => context.renderAveConnection(data.aveConnection);
-  const connector = html.slice(html.indexOf('let aveBusy'), html.indexOf('async function refresh()'));
-  const locales = html.slice(html.indexOf('function applyStaticTranslations()'), html.indexOf('const number = function'));
-  vm.runInNewContext(connector + locales + ';this.feedback=()=>aveFeedback;this.isBusy=()=>aveBusy;', context);
-  context.renderAveConnection(saved);
-  return { context, elements, buttons, saved };
-}
-
-test('AVE connection feedback distinguishes budgets, queue wait and real network/upstream failures', async () => {
-  const mapped = { AVE_HOURLY_BUDGET: 'aveHourlyPaused', AVE_TOTAL_BUDGET: 'aveTotalPaused',
-    AVE_DISCOVERY_RESERVE: 'aveTestReserved', AVE_WAIT: 'aveTestWaiting', AVE_NETWORK: 'aveTestNetwork', AVE_UPSTREAM: 'aveTestUpstream' };
-  for (const [code, message] of Object.entries(mapped)) {
-    const retryAt = AVE_UI_AT + 7200000;
-    const snapshot = { configured: true, data: { configured: true,
-      status: ['AVE_NETWORK', 'AVE_UPSTREAM'].includes(code) ? 'error' : 'waiting', code, retryAt } };
-    const { context, elements } = aveConnectionHarness(async () => ({ ok: false, json: async () => ({ error: code, retryAt, ave: snapshot }) }));
-    elements['ave-api-key'].value = 'synthetic-form-key';
-    await context.changeAve('configure');
-    assert.match(elements['ave-config-status'].textContent, new RegExp('zh-CN:' + message));
-    assert.match(elements['ave-config-status'].textContent, new RegExp('clock:' + retryAt));
-    assert.equal(elements['ave-data-status'].textContent, 'zh-CN:' + (snapshot.data.status === 'waiting' ? 'aveDeferred' : 'aveFailed'));
-    assert.equal(elements['ave-api-key'].value, '');
-    assert.doesNotMatch(elements['ave-config-status'].textContent, /synthetic-form-key/);
-  }
-});
-
-test('AVE failure notice survives status polling and changes language without reverting to Key saved', async () => {
-  const { context, elements, saved } = aveConnectionHarness(async () => ({ ok: false,
-    json: async () => ({ error: 'AVE_WAIT', retryAt: AVE_UI_AT + 300000, ave: { configured: true, data: { status: 'waiting' } } }) }));
-  await context.changeAve('configure');
-  context.renderAveConnection(saved);
-  assert.match(elements['ave-config-status'].textContent, /zh-CN:aveTestWaiting/);
-  assert.equal(elements['ave-config-status'].dataset.i18n, undefined);
-  context.setLocale('en', true);
-  assert.match(elements['ave-config-status'].textContent, /en:aveTestWaiting/);
-  assert.doesNotMatch(elements['ave-config-status'].textContent, /aveKeySaved|zh-CN:/);
-  context.lastData = null;
-  context.setLocale('zh-CN', true);
-  assert.match(elements['ave-config-status'].textContent, /zh-CN:aveTestWaiting/,
-    'feedback must also change language before the first main status snapshot arrives');
-});
-
-test('AVE busy notice remains visible during polling and a language switch', async () => {
-  let release;
-  const { context, elements, buttons, saved } = aveConnectionHarness(() => new Promise(resolve => { release = resolve; }));
-  const request = context.changeAve('configure');
-  assert.equal(context.isBusy(), true); assert.ok(buttons.every(button => button.disabled));
-  context.renderAveConnection(saved);
-  assert.equal(elements['ave-config-status'].textContent, 'zh-CN:aveChecking');
-  context.setLocale('en', true);
-  assert.equal(elements['ave-config-status'].textContent, 'en:aveChecking');
-  release({ ok: true, json: async () => ({ ave: saved }) }); await request;
-  assert.equal(context.isBusy(), false); assert.ok(buttons.every(button => !button.disabled));
-  assert.equal(elements['ave-config-status'].textContent, 'en:aveKeySaved');
-});
-
-test('delayed AVE status response cannot replace a newly successful configure result', async () => {
-  let release;
-  const { context, elements, saved } = aveConnectionHarness(url => url === '/api/ave-status'
-    ? new Promise(resolve => { release = resolve; })
-    : Promise.resolve({ ok: true, json: async () => ({ ave: saved }) }));
-  const oldPoll = context.refreshAve();
-  await context.changeAve('configure');
-  release({ ok: true, json: async () => ({ ave: { configured: false, data: { configured: false, status: 'untested' } } }) });
-  await oldPoll;
-  assert.equal(elements['ave-config-status'].textContent, 'zh-CN:aveKeySaved');
-  assert.equal(elements['ave-data-status'].textContent, 'zh-CN:aveChecked');
-  assert.equal(elements['aveSummary'].textContent, ' · zh-CN:aveKeySaved');
-});
-
-test('successful manual retry clears the previous AVE failure and never returns it on later polls', async () => {
-  let succeed = false;
-  const { context, elements, saved } = aveConnectionHarness(async () => ({ ok: succeed,
-    json: async () => succeed ? { ave: saved } : { error: 'AVE_NETWORK', ave: { configured: true, data: { status: 'error' } } } }));
-  await context.changeAve('configure');
-  assert.match(elements['ave-config-status'].textContent, /aveTestNetwork/);
-  succeed = true; await context.changeAve('configure');
-  assert.equal(context.feedback(), null);
-  context.renderAveConnection(saved);
-  assert.equal(elements['ave-config-status'].textContent, 'zh-CN:aveKeySaved');
-});
-
-test('AVE feedback ignores invalid retry timestamps and never displays raw unknown error payloads', async () => {
-  for (const retryAt of [undefined, Infinity, NaN, -1, AVE_UI_AT, AVE_UI_AT + 0.5,
-    String(AVE_UI_AT + 300000), AVE_UI_AT + 367 * 86400000]) {
-    const { context, elements } = aveConnectionHarness(async () => ({ ok: false,
-      json: async () => ({ error: 'AVE_WAIT', retryAt }) }));
-    await context.changeAve('configure');
-    assert.match(elements['ave-config-status'].textContent, /aveTestWaiting/);
-    assert.doesNotMatch(elements['ave-config-status'].textContent, /aveTestRetryAt|clock:/);
-  }
-  for (const secret of ['synthetic-private-key-in-upstream-text', 'AVE_SYNTHETIC_SECRET_KEY']) {
-    for (const fetch of [async () => ({ ok: false, json: async () => ({ error: secret }) }),
-      async () => { throw new Error(secret); }]) {
-      const { context, elements } = aveConnectionHarness(fetch);
-      await context.changeAve('configure');
-      assert.match(elements['ave-config-status'].textContent, /aveTestUnknown/);
-      assert.equal(elements['ave-config-status'].textContent.includes(secret), false);
-    }
-  }
+  assert.doesNotMatch(html, /ave\.ai|AVE_INVITE_URL|aveTokenUrl/);
 });
 
 test('所有内联脚本均可通过语法解析', () => {
@@ -403,20 +265,25 @@ test('顶部链标签可直接加入或切换扫描，且只呈现本版本支�
   assert.doesNotMatch(html.slice(start, end), /\/api\/active-chain/);
 });
 
-test('AVE 健康状态使用短句，限频仍显示恢复时间', () => {
+test('行情源健康状态使用短句，限频仍显示恢复时间', () => {
   const start = html.indexOf('function providerStatus('), end = html.indexOf('function freshnessStatus(', start);
   const now = Date.now();
   const context = { Date, activeChain: data => data.activeChain, formatClock: value => 'clock:' + value,
     t: (key, args) => args ? key + ':' + JSON.stringify(args) : key, number: Number, relativeTime: String };
   vm.runInNewContext(html.slice(start, end) + ';this.providerStatus=providerStatus;', context);
-  const healthy = context.providerStatus({ scanProvider: 'AVE', activeChain: 'bsc', status: 'RUNNING',
-    aveMarket: { chains: { bsc: { state: 'observed' } } } });
-  assert.equal(healthy.detail, 'avePollingHealthy');
+  const healthy = context.providerStatus({ activeChain: 'bsc', status: 'RUNNING',
+    sourceHealth: { discovery: { trenches: { ok: true }, trending: { ok: true }, complete: true, checkedAt: now - 1000 } } });
+  assert.equal(healthy.title, 'providerNormal');
+  assert.match(healthy.detail, /providerDiscovery/);
   assert.doesNotMatch(healthy.detail, /liveLimits/);
-  const limited = context.providerStatus({ scanProvider: 'AVE', activeChain: 'bsc', status: 'RATE_LIMITED',
-    aveMarket: { pauseCode: 'AVE_RATE_LIMITED', nextAllowedAt: now + 60_000 } });
-  assert.match(limited.detail, /aveRetryAt/);
+  // A cooldown is only a cooldown while it has not elapsed; it must say when.
+  const limited = context.providerStatus({ activeChain: 'bsc', status: 'RATE_LIMITED',
+    market: { provider: 'GMGN', pauseCode: 'SOURCE_COOLING', nextAllowedAt: now + 60_000 } });
+  assert.match(limited.detail, /apiRetryAt/);
   assert.match(limited.detail, /clock:/);
+  const elapsed = context.providerStatus({ activeChain: 'bsc', status: 'RATE_LIMITED',
+    market: { provider: 'GMGN', pauseCode: 'SOURCE_COOLING', nextAllowedAt: now - 1000 } });
+  assert.doesNotMatch(elapsed.detail, /clock:/);
 });
 
 test('共享免费调度显示选中链的最早尝试，不把全局或空时间当每链倒计时', () => {
@@ -455,7 +322,9 @@ test('筛选原因默认折叠，缺失统计不伪造零，行情初筛不标�
   assert.match(html, /<details id="screeningDetails"[^>]*hidden>/);
   assert.doesNotMatch(html, /<details id="screeningDetails"[^>]*\bopen\b/);
   assert.match(html, /liveEligible: \['初筛 · 未核验'/);
-  assert.match(html, /\['AUTH_REQUIRED', 'AVE_AUTH_REQUIRED'\]\.includes\(data\.status\)/);
+  // 退役后只剩一个未授权状态：不再存在 AVE 专属码。
+  assert.match(html, /data\.status === 'AUTH_REQUIRED'/);
+  assert.doesNotMatch(html, /AVE_AUTH_REQUIRED/);
 });
 
 test('页面不再公开展示严格筛选规则', () => {
@@ -466,30 +335,14 @@ test('页面不再公开展示严格筛选规则', () => {
   assert.doesNotMatch(html, /class="criteria"/);
 });
 
-test('AVE 单 Key 仅提交给同源接口且不会持久化或回显', () => {
-  assert.match(html, /id="ave-api-key"[^>]*type="password"[^>]*autocomplete="off"[^>]*spellcheck="false"[^>]*maxlength="1024"/);
-  assert.match(html, /id="ave-key-form"/);
-  assert.match(html, /id="ave-config-status"[^>]*aria-live="polite"/);
-  const start = html.indexOf('async function changeAve');
-  const end = html.indexOf('async function refresh', start);
-  assert.ok(start >= 0 && end > start);
-  const source = html.slice(start, end);
-  assert.match(source, /fetch\('\/api\/ave-' \+ action/);
-  assert.match(source, /body: JSON\.stringify\(body\)/);
-  assert.match(source, /byId\('ave-api-key'\)\.value = ''/);
-  assert.match(source, /if \(!response\.ok\)\s*\{[\s\S]*?throw/);
-  assert.match(source, /renderAveConnection\(result\.ave\)/);
-  assert.doesNotMatch(source, /localStorage|sessionStorage|readStorage|writeStorage/);
-  assert.doesNotMatch(source, /console\.|innerHTML|textContent\s*=\s*result\./);
-});
-
-test('生产页面无 GMGN 配置流程，AVE 行情不请求钱包私钥或交易权限', () => {
-  assert.doesNotMatch(html, /id="(?:gmgnKeyInput|gmgnKeyButton|gmgnKeyStatus|gmgnOnboardingButton|gmgnPublicKey)"/);
-  assert.doesNotMatch(html, /fetch\(['"]\/api\/gmgn|connectGmgnApi|prepareGmgnOnboarding/);
+// AVE is retired as the market source, so there is no provider key form left on
+// the page at all - nothing to type, nothing to store, nothing to echo back.
+test('生产页面没有行情源配置流程，也不请求钱包私钥或交易权限', () => {
+  assert.doesNotMatch(html, /id="(?:gmgnKeyInput|gmgnKeyButton|gmgnKeyStatus|gmgnOnboardingButton|gmgnPublicKey|ave-api-key|aveSettings)"/);
+  assert.doesNotMatch(html, /fetch\(['"]\/api\/(?:gmgn|ave)-|connectGmgnApi|prepareGmgnOnboarding|changeAve|refreshAve|renderAveConnection/);
   assert.doesNotMatch(html, /gmgn-private-key|privateKey\s*=|eth_requestAccounts|signTransaction|sendTransaction/);
-  assert.match(html, /https:\/\/cloud\.ave\.ai\//);
+  assert.doesNotMatch(html, /ave\.ai|AVE_AUTH_REQUIRED|AVE_INVITE_URL/);
   assert.doesNotMatch(html, /仅测试行情，约 5 CU。单 Key，无需钱包。/);
-  assert.doesNotMatch(html, /id="ave-trade-status"|ave-data-key|ave-trade-key/);
 });
 
 test('看板包含新鲜度、运行进度和动态降级支持', () => {

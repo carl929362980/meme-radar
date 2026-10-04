@@ -60,26 +60,27 @@ test('open-source release metadata uses AGPL and remains blocked from accidental
   assert.equal(fs.existsSync(path.join(root, 'LICENSE')), true);
 });
 
-test('community production entry keeps wiring AVE through local credentials and loads no credential store', () => {
+// AVE is retired as the market source. What this test actually protects is that
+// the community entry needs no second credential path and no credential store -
+// that clause was already rewritten once on 2026-10-03 when "only an AVE key"
+// stopped being the property worth protecting, and it is rewritten again now
+// that the source is GMGN. The entry wires one source, reads its key from the
+// same local place, and keeps the shared request spacing.
+test('community production entry wires one market source with local credentials and loads no credential store', () => {
   const main = fs.readFileSync(path.join(root, 'src/main.mjs'), 'utf8');
-  assert.match(main, /import\s*\{\s*AveClient\s*\}\s*from\s*['"]\.\/ave\.mjs['"]/);
-  assert.match(main, /apiKeyProvider:\s*\(\)\s*=>\s*ave\.getKey\(\)/);
-  assert.match(main, /verifyData:\s*\(key,\s*options\)\s*=>\s*market\.verifyApiKey\(key,\s*options\)/);
+  const radar = fs.readFileSync(path.join(root, 'src/gmgn-radar.mjs'), 'utf8');
+  assert.match(main, /import\s*\{\s*GmgnRadarSource\s*\}\s*from\s*['"]\.\/gmgn-radar\.mjs['"]/);
   assert.match(main, /const sharedRequestIntervalMs\s*=\s*5\s*\*\s*60_000/);
-  assert.match(main, /minimumGapMs:\s*sharedRequestIntervalMs/);
   assert.match(main, /new Scanner\(\{[^;]+sharedRequestIntervalMs/);
   assert.match(main, /new Scanner\(\{ provider: market/);
   assert.match(main, /new LiveDiscovery\(\{ provider: market/);
-  // This test previously ended by banning any reference to a second market
-  // client, as a proxy for "the open-source build needs nothing but an AVE key".
-  // That clause was retired on 2026-10-03 because the proxy had stopped tracking
-  // the property: AVE's trending list cannot supply a pool younger than an hour,
-  // so discovery is impossible with AVE alone, and the signal channel is a
-  // separate, optional, key-gated module rather than a replacement credential
-  // path. What the ban actually protected is no credential machinery, which is
-  // asserted here directly and is still forbidden. See
-  // test/source-invariants.test.mjs for the full reasoning and the wider
-  // zero-dependency and no-signing-key assertions.
+  assert.match(main, /new GmgnRadarSource\(\{[^}]*chains/);
+  // The one source is the only source: no AVE module, client or key path left.
+  assert.doesNotMatch(main, /from\s*['"]\.\/ave(?:-settings)?\.mjs['"]|AveClient|AVE_API_KEY|ave-credentials/);
+  // The bucket is shared with the probe, so the floor is a real constraint:
+  // 2200 ms between requests, never less.
+  assert.match(radar, /minGapMs = 2_200/);
+  assert.doesNotMatch(radar, /minGapMs = \d{1,3}\b/);
   assert.doesNotMatch(main, /gmgn-key-store|gmgn-connection|gmgn-readonly-worker|saveGmgnKey|getGmgnOnboarding|GMGN_PRIVATE_KEY/);
 });
 

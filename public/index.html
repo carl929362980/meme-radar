@@ -186,7 +186,7 @@
     .dot.SWITCHING { background: var(--cyan); }
     .dot.DEGRADED { background: var(--amber); }
     .dot.ERROR, .dot.STATE_ERROR, .dot.OFFLINE { background: var(--red); }
-    .dot.RATE_LIMITED, .dot.AUTH_REQUIRED, .dot.AVE_AUTH_REQUIRED { background: var(--amber); }
+    .dot.RATE_LIMITED, .dot.AUTH_REQUIRED { background: var(--amber); }
     .dot.scanning { animation: statusPulse 1.1s ease-in-out infinite; }
     @keyframes statusPulse {
       0%, 100% { transform: scale(1); box-shadow: 0 0 8px currentColor; }
@@ -308,12 +308,6 @@
     .onboarding-status.bad { color: var(--red); }
 
     .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 13px; }
-    .ave-settings { margin: 16px 0; padding: 18px; }
-    .ave-settings summary { cursor: pointer; font-weight: 700; }
-    .ave-settings .api-key-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 12px 0; }
-    .ave-settings label { min-width: 160px; }
-    .ave-settings input { flex: 1 1 230px; min-width: 0; }
-    .ave-settings p { line-height: 1.6; }
     .panel {
       background: linear-gradient(145deg, #111e24ed, #0a1216f2);
       border: 1px solid var(--line);
@@ -858,20 +852,6 @@
     </section>
     <details id="advancedPanel" class="advanced-panel">
       <summary data-i18n="advancedTitle">设置与运行记录</summary>
-    <details id="aveSettings" class="panel ave-settings">
-      <summary>AVE API <span id="aveSummary" class="muted"></span></summary>
-      <form class="api-key-row" id="ave-key-form">
-        <label for="ave-api-key">AVE API Key</label>
-        <input id="ave-api-key" class="field" type="password" autocomplete="off" spellcheck="false" maxlength="1024" placeholder="API Key">
-        <button type="submit" class="mini-button" data-i18n="aveTest">保存 / 测试</button>
-        <button type="button" class="mini-button" id="ave-remove" data-i18n="aveRemove">移除 Key</button>
-      </form>
-      <p id="ave-config-status" role="status" aria-live="polite" data-i18n="aveUnconfigured">未配置</p>
-      <p id="aveBudget" class="muted"></p>
-      <details><summary data-i18n="aveDiagnostics">连接诊断</summary><p id="aveTransport" class="muted"></p><p id="aveDiagnosticRows" class="muted" style="white-space:pre-wrap"></p></details>
-      <div class="api-key-row"><span data-i18n="aveDataService">行情服务</span><span id="ave-data-status" role="status" data-i18n="aveUnconfigured">未配置</span></div>
-      <div class="manage-actions"><a href="https://share.ave.ai?lang=zh-cn&amp;code=0001" target="_blank" rel="noopener noreferrer" data-i18n="aveEntry">打开 AVE</a><a href="https://cloud.ave.ai/login" target="_blank" rel="noopener noreferrer" data-i18n="aveManage">API 管理</a></div>
-    </details>
     <section class="grid">
       <article class="panel wide manage-panel">
         <details id="manageDetails">
@@ -883,7 +863,7 @@
               <button id="saveChains" class="mini-button" type="button" data-i18n="saveChains">保存扫描链</button>
               <button id="notificationButton" class="mini-button" type="button" data-i18n="enableAlerts">开启桌面提醒</button>
               <button id="exportButton" class="mini-button" type="button" data-i18n="exportRecords">导出记录</button>
-              <button id="disconnectButton" class="mini-button ignore" type="button" data-i18n="disconnectApi">清除并断开 API</button>
+</button>
             </div>
             <p id="schedulerDetail" class="muted"></p>
             <p data-i18n="alertLimit">桌面提醒需要本页保持打开并允许通知；静音后仍保留页面事件。</p>
@@ -894,7 +874,7 @@
       </article>
       <article class="panel telemetry" aria-label="运行状态" data-i18n-aria="runtimeAria">
         <div class="telemetry-item"><label data-i18n="localService">本地服务</label><strong id="serviceState" data-i18n="connecting">正在连接</strong><small id="serviceDetail" data-i18n="port3791">端口3791</small></div>
-        <div class="telemetry-item"><label data-i18n="aveSource">AVE数据源</label><strong id="providerState" data-i18n="waitingState">等待状态</strong><small id="providerDetail" data-i18n="notRead">尚未读取</small></div>
+        <div class="telemetry-item"><label data-i18n="sourceProvider">数据源</label><strong id="providerState" data-i18n="waitingState">等待状态</strong><small id="providerDetail" data-i18n="notRead">尚未读取</small></div>
         <div class="telemetry-item"><label data-i18n="lastAttemptLabel">最近扫描尝试</label><strong id="lastAttempt">--</strong><small id="attemptAgo" data-i18n="noRecord">暂无记录</small></div>
         <div class="telemetry-item"><label data-i18n="lastSuccessLabel">最近成功扫描</label><strong id="lastSuccess">--</strong><small id="successAgo" data-i18n="noRecord">暂无记录</small></div>
         <div class="telemetry-item"><label data-i18n="nextScanLabel">下轮扫描</label><strong id="nextScan">--</strong><small id="scanProgress" data-i18n="waitingSchedule">等待调度</small></div>
@@ -907,7 +887,7 @@
       </details>
 
       <article class="panel metric"><label><span data-i18n="scanRounds">扫描轮次</span> <span class="scope" data-i18n="cumulative">累计</span></label><strong id="scanCount">0</strong><small data-i18n="completedRounds">成功完成的历史轮次</small></article>
-      <article class="panel metric"><label><span data-i18n="discoveredTokens">发现代币</span> <span class="scope" data-i18n="currentRound">本轮</span></label><strong id="discovered">0</strong><small data-i18n="aveReturned">本轮AVE返回数量</small></article>
+      <article class="panel metric"><label><span data-i18n="discoveredTokens">发现代币</span> <span class="scope" data-i18n="currentRound">本轮</span></label><strong id="discovered">0</strong><small data-i18n="roundReturned">本轮返回数量</small></article>
       <article class="panel metric" hidden aria-hidden="true"><label><span data-i18n="prequalifiedLabel">初筛通过</span> <span class="scope" data-i18n="currentRound">本轮</span></label><strong id="prequalified">0</strong><small id="prequalifiedDetail" data-i18n="awaitingAudit">等待或已进入深度审计</small></article>
       <article class="panel metric" hidden aria-hidden="true"><label><span data-i18n="deepAuditLabel">深度审计</span> <span class="scope" data-i18n="last30m">近30分钟</span></label><strong id="audited">0</strong><small id="auditedDetail" data-i18n="auditSnapshots">当前保留的审计快照</small></article>
       <article class="panel metric" hidden aria-hidden="true"><label><span data-i18n="chainCandidatesLabel">链上候选/待人工看X</span> <span class="scope" data-i18n="last30m">近30分钟</span></label><strong id="chainCandidates">0</strong><small id="chainCandidateDetail" data-i18n="notBuySignal">链上硬门通过，不代表应买入</small></article>
@@ -916,7 +896,7 @@
       <article class="panel wide" hidden aria-hidden="true">
         <div class="head">
           <h2 data-i18n="auditTitle">近30分钟深度审计</h2>
-          <span data-i18n="auditSubtitle">市值2万–8万优先 · 创建至少5分钟 · 系统按AVE额度分批深审</span>
+          <span data-i18n="auditSubtitle">市值2万–8万优先 · 创建至少5分钟 · 系统按批次深审</span>
         </div>
         <div class="toolbar" aria-label="候选筛选和排序" data-i18n-aria="toolbarAria">
           <input id="searchInput" class="field" type="search" autocomplete="off" placeholder="搜索代币名称、简称或合约地址" data-i18n-placeholder="searchPlaceholder">
@@ -979,54 +959,12 @@
       voiceSpotlightChanged: ["条件已变化 · 等待重新复核","條件已變化 · 等待重新複核","Conditions changed · Awaiting review","条件が変化・再確認待ち","조건 변경 · 재검토 대기","تغيّرت الشروط · بانتظار إعادة المراجعة"],
       voiceSpotlightRow: ["本次语音提醒","本次語音提醒","This voice alert","今回の音声通知","이번 음성 알림","هذا التنبيه الصوتي"],
       updateButton: ["下载最新版","下載最新版","Latest release","最新版を入手","최신 버전 받기","تنزيل أحدث إصدار"],
-      aveBudgetPaused: ["本机预算已用完","本機預算已用完","Local budget exhausted","本機の予算を消費","로컬 예산 소진","نفدت الميزانية المحلية"],
-      aveHourlyPaused: ["本小时预算暂缓","本小時預算暫緩","Hourly budget pause","時間予算による一時停止","시간 예산 일시정지","توقف ميزانية الساعة"],
-      aveTotalPaused: ["总预算已用完，需核对额度","總預算已用完，需核對額度","Total budget exhausted; verify quota","総予算終了・残量を確認","총 예산 소진 · 할당량 확인","نفدت الميزانية الإجمالية؛ تحقق من الحصة"],
-      aveQuotaPaused: ["AVE 配额暂停","AVE 配額暫停","AVE quota pause","AVE クォータ停止","AVE 할당량 일시정지","توقف حصة AVE"],
-      aveBudgetLine: ["本机估算 · 总剩余 {remaining}/{total} CU · 今日 {used}/{limit} · 本小时 {hourUsed}/{hourLimit}","本機估算 · 總剩餘 {remaining}/{total} CU · 今日 {used}/{limit} · 本小時 {hourUsed}/{hourLimit}","Local estimate · Remaining {remaining}/{total} CU · Today {used}/{limit} · This hour {hourUsed}/{hourLimit}","本機推定 · 残量 {remaining}/{total} CU · 本日 {used}/{limit} · 今時間 {hourUsed}/{hourLimit}","로컬 추정 · 잔여 {remaining}/{total} CU · 오늘 {used}/{limit} · 이번 시간 {hourUsed}/{hourLimit}","تقدير محلي · المتبقي {remaining}/{total} CU · اليوم {used}/{limit} · الساعة {hourUsed}/{hourLimit}"],
-      aveBudgetHint: ["非账户余额；总预算不自动清零。全局热榜请求每5分钟最多发起1次，429后放慢至8–15分钟。","非帳戶餘額；總預算不自動清零。全域熱榜請求每5分鐘最多發起1次，429後放慢至8–15分鐘。","Not the account balance; total usage never auto-resets. Global leaderboard reads start at most once every 5 min and back off to 8–15 min after 429.","口座残高ではなく、総使用量は自動リセットされません。ランキング取得は全体で5分に最大1回開始し、429後は8〜15分に延長します。","계정 잔액이 아니며 총 사용량은 자동 초기화되지 않습니다. 전체 인기 목록 요청은 5분마다 최대 1회 시작하고 429 후에는 8~15분으로 늘어납니다.","ليس رصيد الحساب؛ لا يُصفّر الإجمالي تلقائيًا. يبدأ طلب قائمة رائجة واحد عالميًا كحد أقصى كل 5 دقائق، ويتراجع إلى 8–15 دقيقة بعد 429."],
-      aveDiagnostics: ['连接诊断','連線診斷','Connection diagnostics','接続診断','연결 진단','تشخيص الاتصال'],
-      aveTransport: ['完成后间隔 {seconds} 秒 · 退避级别 {level}','完成後間隔 {seconds} 秒 · 退避級別 {level}','Completion gap {seconds}s · Backoff level {level}','完了後の間隔 {seconds}秒 · バックオフ {level}','완료 후 간격 {seconds}초 · 백오프 {level}','فاصل بعد الاكتمال {seconds} ثانية · مستوى الانتظار {level}'],
-      aveRetryReady: ['冷却结束，等待复查','冷卻結束，等待複查','Cooldown ended; awaiting recheck','待機終了・再確認待ち','대기 종료 · 재확인 대기','انتهى الانتظار؛ بانتظار التحقق'],
-      aveRetryAt: ['自动复查不早于 {time}','自動複查不早於 {time}','Automatic recheck no earlier than {time}','{time}以降に自動再確認','{time} 이후 자동 재확인','إعادة التحقق تلقائيًا بعد {time}'],
-      avePartial: ['部分行情待补读','部分行情待補讀','Some market data pending','一部データは再取得待ち','일부 시세 재조회 대기','بعض البيانات بانتظار الاستكمال'],
-      aveReason_ok: ['返回成功','返回成功','Response received','応答成功','응답 성공','تم استلام الرد'],
-      aveReason_rate: ['频率限制提示','頻率限制提示','Rate-limit indication','頻度制限の通知','빈도 제한 안내','إشارة تقييد المعدل'],
-      aveReason_quota: ['额度限制提示','額度限制提示','Quota indication','割当上限の通知','할당량 제한 안내','إشارة حد الحصة'],
-      aveReason_gateway: ['网关限制提示','閘道限制提示','Gateway restriction indication','ゲートウェイ制限の通知','게이트웨이 제한 안내','إشارة تقييد البوابة'],
-      aveReason_unknown: ['原因未明确','原因未明確','Reason unspecified','原因不明','원인 미확인','السبب غير محدد'],
-      aveReason_timeout: ['响应超时','回應逾時','Response timeout','応答タイムアウト','응답 시간 초과','انتهت مهلة الرد'],
-      aveReason_schema: ['行情格式或身份核验失败','行情格式或身分核驗失敗','Market format or identity validation failed','市場データの形式・識別検証に失敗','시장 데이터 형식 또는 식별 검증 실패','فشل التحقق من تنسيق بيانات السوق أو هويتها'],
-      aveReason_cancelled: ['已取消','已取消','Cancelled','キャンセル済み','취소됨','أُلغي'],
+      budgetPaused: ["本机预算已用完","本機預算已用完","Local budget exhausted","本機の予算を消費","로컬 예산 소진","نفدت الميزانية المحلية"],
+      hourlyPaused: ["本小时预算暂缓","本小時預算暫緩","Hourly budget pause","時間予算による一時停止","시간 예산 일시정지","توقف ميزانية الساعة"],
+      totalPaused: ["总预算已用完，需核对额度","總預算已用完，需核對額度","Total budget exhausted; verify quota","総予算終了・残量を確認","총 예산 소진 · 할당량 확인","نفدت الميزانية الإجمالية؛ تحقق من الحصة"],
+      quotaPaused: ["行情源 配额暂停", "行情源 配額暫停", "the market source quota pause", "データ元 クォータ停止", "시세 소스 할당량 일시정지", "توقف حصة مصدر السوق"],
       poolAge: ["池龄 / 开始交易","池齡 / 開始交易","Pool / trading age","プール / 取引開始","풀 / 거래 기간","عمر المجمع / التداول"],
       launchAge: ["上线 / 开始交易","上線 / 開始交易","Launch / trading age","上場 / 取引開始","출시 / 거래 기간","عمر الإطلاق / التداول"],
-      aveDataService: ['行情服务','行情服務','Market data','相場サービス','시세 서비스','خدمة بيانات السوق'],
-      aveTradeService: ['交易服务（只读检查）','交易服務（唯讀檢查）','Trading service (read-only check)','取引サービス（読み取り確認）','거래 서비스 (읽기 전용 확인)','خدمة التداول (فحص للقراءة فقط)'],
-      aveApiHelp: ["AVE 负责发现、池行情与 K 线。安全证据不足时不放行。","AVE 負責發現、池行情與 K 線。安全證據不足時不放行。","AVE powers discovery, pools and candles. Missing safety evidence never passes.","AVEで発見・プール・足データを取得。安全証拠不足は保留。","AVE로 발견·풀·캔들을 조회합니다. 안전 증거 부족은 보류합니다.","AVE للاكتشاف والمجمعات والشموع. لا يُقبل نقص أدلة الأمان."],
-      aveKeySaved: ['Key 已保存','Key 已儲存','Key saved','キー保存済み','키 저장됨','تم حفظ المفتاح'],
-      aveReentry: ['请重新填写并验证 AVE API Key','請重新填寫並驗證 AVE API Key','Re-enter and verify your AVE API Key.','AVE APIキーを再入力して検証してください。','AVE API 키를 다시 입력하고 확인하세요.','أعد إدخال مفتاح AVE API والتحقق منه.'],
-      aveTest: ['保存 / 测试','儲存 / 測試','Save / test','保存 / テスト','저장 / 테스트','حفظ / اختبار'],
-      aveRemove: ['移除 Key','移除 Key','Remove key','キーを削除','키 제거','إزالة المفتاح'],
-      aveManage: ['API 管理','API 管理','API settings','API管理','API 관리','إدارة API'],
-      aveUnconfigured: ['未配置','未設定','Not configured','未設定','미설정','غير مضبوط'],
-      aveSaved: ['已保存 · 待测试','已儲存 · 待測試','Saved · Untested','保存済み · 未テスト','저장됨 · 미테스트','محفوظ · لم يُختبر'],
-      aveChecked: ['只读测试通过','唯讀測試通過','Read-only check passed','読み取りテスト完了','읽기 전용 테스트 통과','نجح اختبار القراءة فقط'],
-      aveChecking: ['测试中…','測試中…','Testing…','テスト中…','테스트 중…','جارٍ الاختبار…'],
-      aveFailed: ['连接未通过','連線未通過','Connection check failed','接続テスト失敗','연결 테스트 실패','فشل اختبار الاتصال'],
-      aveDeferred: ['测试暂缓','測試暫緩','Test deferred','テスト待機中','테스트 대기','الاختبار مؤجل'],
-      aveTestWaiting: ['暂未测试：扫描排队或请求冷却中，请稍后再试','暫未測試：掃描排隊或請求冷卻中，請稍後再試','Not tested yet: scan queue or cooldown; retry later','未テスト：巡回待機または制限待機中。後で再試行','아직 미검증: 스캔 대기 또는 요청 간격 대기 중','لم يُختبر بعد: انتظار المسح أو فترة التهدئة؛ أعد المحاولة لاحقًا'],
-      aveTestReserved: ['暂未测试：当前优先保留扫描额度，请稍后再试','暫未測試：目前優先保留掃描額度，請稍後再試','Not tested: capacity reserved for scanning; retry later','未テスト：巡回用の枠を優先確保中','아직 미검증: 스캔을 위해 할당량 예약 중','لم يُختبر: السعة محجوزة للمسح؛ أعد المحاولة لاحقًا'],
-      aveTestRetryAt: ['可在 {time} 后手动重试','可在 {time} 後手動重試','Retry manually after {time}','{time}以降に手動で再試行','{time} 이후 수동으로 재시도','أعد المحاولة يدويًا بعد {time}'],
-      aveTestAuth: ['Key 或接口权限未通过，请核对 AVE 控制台','Key 或介面權限未通過，請核對 AVE 控制台','Key or API permission rejected; check the AVE console','キーまたは権限が拒否されました。AVEで確認','Key 또는 API 권한 거부; AVE 콘솔을 확인하세요','تم رفض المفتاح أو صلاحية API؛ تحقق من لوحة AVE'],
-      aveTestNetwork: ['无法访问 AVE，请检查网络或系统代理','無法存取 AVE，請檢查網路或系統代理','Cannot reach AVE; check network or system proxy','AVEに到達できません。ネットワークまたはプロキシを確認','AVE에 연결할 수 없음; 네트워크 또는 시스템 프록시 확인','تعذر الوصول إلى AVE؛ تحقق من الشبكة أو وكيل النظام'],
-      aveTestTimeout: ['连接测试超时，请稍后重试；不代表 Key 无效','連線測試逾時，請稍後重試；不代表 Key 無效','Connection test timed out; this does not mean the Key is invalid','接続テストがタイムアウト。キー無効とは限りません','연결 테스트 시간 초과; Key가 잘못되었다는 뜻은 아닙니다','انتهت مهلة اختبار الاتصال؛ هذا لا يعني أن المفتاح غير صالح'],
-      aveTestUpstream: ['AVE 服务暂不可用，请稍后重试','AVE 服務暫不可用，請稍後重試','AVE service unavailable; retry later','AVEが一時利用不可。後で再試行','AVE 서비스 일시 불가; 나중에 재시도','خدمة AVE غير متاحة مؤقتًا؛ حاول لاحقًا'],
-      aveTestResponse: ['AVE 返回数据未通过校验，请查看连接诊断','AVE 回傳資料未通過校驗，請查看連線診斷','AVE response validation failed; check diagnostics','AVE応答の検証失敗。接続診断を確認','AVE 응답 검증 실패; 연결 진단 확인','فشل التحقق من استجابة AVE؛ راجع التشخيص'],
-      aveTestStorage: ['本机保存失败，原配置保留；请检查目录权限','本機儲存失敗，原設定保留；請檢查目錄權限','Local save failed; previous configuration retained. Check folder permissions','保存失敗。元の設定は保持。フォルダ権限を確認','로컬 저장 실패; 기존 설정 유지. 폴더 권한 확인','فشل الحفظ المحلي؛ تم الاحتفاظ بالإعداد السابق. تحقق من أذونات المجلد'],
-      aveTestInput: ['请填写有效的 AVE API Key，不要填写钱包私钥','請填寫有效的 AVE API Key，不要填寫錢包私鑰','Enter an AVE API Key, not a wallet private key','ウォレット秘密鍵ではなくAVE APIキーを入力','지갑 개인 키가 아닌 AVE API Key를 입력하세요','أدخل مفتاح AVE API وليس مفتاح المحفظة الخاص'],
-      aveTestCancelled: ['测试已取消或配置已变更，未保存本次 Key','測試已取消或設定已變更，未儲存本次 Key','Test cancelled or configuration changed; this Key was not saved','テスト取消または設定変更。このキーは未保存','테스트 취소 또는 설정 변경; 이번 Key는 저장되지 않음','أُلغي الاختبار أو تغير الإعداد؛ لم يُحفظ هذا المفتاح'],
-      aveTestUnknown: ['测试未完成，请查看连接诊断；不要发送 API Key','測試未完成，請查看連線診斷；不要傳送 API Key','Test incomplete; check diagnostics. Do not share your API Key','テスト未完了。診断を確認。APIキーは共有しないでください','테스트 미완료; 진단 확인. API Key를 공유하지 마세요','لم يكتمل الاختبار؛ راجع التشخيص ولا تشارك مفتاح API'],
-      liveTitle: ['候选雷达','候選雷達','Candidate radar','候補レーダー','후보 레이더','رادار المرشحين'],
       advancedTitle: ['设置与运行记录','設定與執行記錄','Settings & activity','設定と履歴','설정 및 활동','الإعدادات والنشاط'],
       autoScreenPassed: ['自动筛选通过','自動篩選通過','Auto-screen passed','自動選別通過','자동 선별 통과','اجتاز الفرز الآلي'],
       autoScreenWaiting: ['资料待补全','資料待補全','Missing evidence','データ待ち','자료 대기','بيانات ناقصة'],
@@ -1219,7 +1157,6 @@
       liveVolume: ["5分钟成交额","5分鐘成交額","5m volume","5分出来高","5분 거래액","حجم 5 دقائق"],
       ageLabel: ['币龄','幣齡','Token age','トークン経過時間','토큰 나이','عمر الرمز'],
       liveTrades: ["5分钟买 / 卖","5分鐘買 / 賣","5m buys / sells","5分買い / 売り","5분 매수 / 매도","شراء / بيع 5 دقائق"],
-      liveSmart: ['AVE标记聪明钱 / 持有人','AVE標記聰明錢 / 持有人','AVE-tagged smart / holders','AVE分類SM / 保有者','AVE 표시 스마트 / 보유자','ذكي بتصنيف AVE / حاملوه'],
       liveDelta: ['两次快照涨跌（{seconds}秒）','兩次快照漲跌（{seconds}秒）','Snapshot price change ({seconds}s)','前回比（{seconds}秒）','스냅샷 가격 변화 ({seconds}초)','تغير السعر بين لقطتين ({seconds}ث)'],
       liveUnreviewed: ['观察中','觀察中','Watching','監視中','관찰 중','قيد الرصد'],
       liveAudit: ['排队核验','排隊核驗','Queue audit','審査を予約','감사 대기 등록','طلب تدقيق'],
@@ -1228,8 +1165,8 @@
       liveAuditDenied: ['暂不能排队：证据已旧、超出原初筛范围或已被安全拒绝','暫不能排隊：證據已舊、超出原初篩範圍或已被安全拒絕','Cannot queue: stale, outside prefilter or safety-rejected','予約不可：古い証拠・対象外・安全上除外','대기 불가: 오래됨, 범위 밖 또는 안전 거부','تعذر الطلب: بيانات قديمة أو خارج الفلتر أو مرفوض أمنيًا'],
       liveQueueFull: ['核验队列已满，请先等待已有请求完成','核驗佇列已滿，請先等待已有請求完成','Audit queue full; wait for pending requests','審査予約が満杯です。完了をお待ちください','감사 대기열 가득 참; 기존 요청 완료 대기','طابور التدقيق ممتلئ؛ انتظر انتهاء الطلبات'],
       liveLimits: ['全局每5分钟最多发起1条链的热榜请求；多链轮询。429后改为8分钟（必要时15分钟）；5分钟档失败后24小时内不再试探。','全域每5分鐘最多發起1條鏈的熱榜請求；多鏈輪詢。429後改為8分鐘（必要時15分鐘）；5分鐘檔失敗後24小時內不再試探。','Globally, at most one chain leaderboard request starts every 5 min; chains rotate. HTTP 429 backs off to 8 min (15 if needed); after a failed 5-min probe, that cadence is not tried again for 24 h.','全体で5分に最大1チェーンのランキング取得を開始し、複数チェーンは巡回します。429時は8分（必要なら15分）に延長し、5分間隔の試行失敗後24時間は同じ間隔を再試行しません。','전체에서 5분마다 체인 1개의 인기 목록 요청만 시작하며 여러 체인은 순환합니다. 429 발생 시 8분(필요하면 15분)으로 늘리고, 5분 간격 시도 실패 후 24시간 동안 같은 간격을 다시 시도하지 않습니다.','يبدأ عالميًا طلب قائمة رائجة لسلسلة واحدة كحد أقصى كل 5 دقائق، مع التناوب بين السلاسل. عند 429 يتراجع إلى 8 دقائق (15 عند الحاجة)، وبعد فشل تجربة فاصل 5 دقائق لا يعيد تجربة هذا الفاصل لمدة 24 ساعة.'],
-      avePollingHealthy: ['轮询正常', '輪詢正常', 'Polling normally', '正常に巡回中', '정상 순환 중', 'الاستطلاع يعمل'],
-      aveAwaitingFirstScan: ['等待本链首轮', '等待本鏈首輪', 'Waiting for this chain', 'このチェーンの初回待ち', '해당 체인 첫 스캔 대기', 'بانتظار أول مسح لهذه الشبكة'],
+      pollingHealthy: ['轮询正常', '輪詢正常', 'Polling normally', '正常に巡回中', '정상 순환 중', 'الاستطلاع يعمل'],
+      awaitingFirstScan: ['等待本链首轮', '等待本鏈首輪', 'Waiting for this chain', 'このチェーンの初回待ち', '해당 체인 첫 스캔 대기', 'بانتظار أول مسح لهذه الشبكة'],
       manageTitle: ['⚙ 扫描设置与记录','⚙ 掃描設定與記錄','⚙ Scan settings & records','⚙ スキャン設定と記録','⚙ 스캔 설정 및 기록','⚙ إعدادات المسح والسجلات'],
       skippedAfterReject: ['安全项已拒绝，后续检查已跳过','安全項已拒絕，後續檢查已略過','Safety rejection; further checks skipped','安全項目で除外。後続チェックは省略','안전 항목에서 제외; 후속 검사 생략','رُفض لأسباب أمنية؛ تم تخطي الفحوص اللاحقة'],
       scanSelectionHelp: ['选择1–3条链轮询；点击已启用链只查看，未启用链会加入，满3条时替换当前查看链。','選擇1–3條鏈輪詢；點擊已啟用鏈只檢視，未啟用鏈會加入，滿3條時取代當前檢視鏈。','Poll 1–3 chains. Enabled-chain tabs only change the view; inactive chains join polling, replacing the viewed chain when all 3 slots are full.','1～3チェーンを巡回。有効なタブは表示のみ切替え、未選択チェーンは追加され、3件済みなら表示中のチェーンを置換します。','1~3개 체인을 순환합니다. 활성 체인 탭은 보기만 바꾸고, 비활성 체인은 추가되며 3개가 찼 경우 현재 보는 체인을 교체합니다.','استطلع 1–3 شبكات. تبويبات الشبكات المفعلة تغير العرض فقط؛ تنضم غير المفعلة إلى التناوب، وتستبدل الشبكة المعروضة عند امتلاء الخانات الثلاث.'],
@@ -1238,8 +1175,6 @@
       muteAlerts: ['静音桌面提醒','靜音桌面提醒','Mute desktop alerts','通知をミュート','알림 끄기','كتم التنبيهات'],
       alertLimit: ['桌面提醒需要本页保持打开并允许通知；静音后仍保留页面事件。','桌面提醒需保持本頁開啟並允許通知；靜音仍保留頁面事件。','Desktop alerts require this page to stay open and notification permission. Muting keeps the event history.','通知にはページを開いたままにし、通知権限が必要です。ミュート後も履歴は残ります。','알림은 페이지를 열어두고 권한을 허용해야 합니다. 음소거해도 기록은 유지됩니다.','تتطلب التنبيهات بقاء الصفحة مفتوحة وإذن الإشعارات. يبقى السجل عند الكتم.'],
       exportRecords: ['导出记录','匯出記錄','Export records','記録を書き出す','기록 내보내기','تصدير السجلات'],
-      disconnectApi: ['清除并断开 API','清除並中斷 API','Clear & disconnect API','APIを削除・切断','API 삭제 및 연결 해제','مسح وفصل API'],
-      disconnectConfirm: ['清除本项目保存的 Key 并停止扫描？不会再回退使用旧 Key；全局 AVE 配置不修改。','清除本專案 Key 並停止掃描？不再回退舊 Key；全域設定不修改。','Clear this project’s key and stop scanning? Legacy-key fallback will stay disabled. Global config is untouched.','このプロジェクトのキーを削除し停止しますか？旧キーに戻りません。全体設定は変更しません。','프로젝트 키를 삭제하고 중지할까요? 이전 키로 복귀하지 않으며 전역 설정은 유지합니다.','مسح مفتاح المشروع وإيقاف المسح؟ لن يُستخدم المفتاح القديم ولن يتغير الإعداد العام.'],
       savedNotes: ['收藏与备注','收藏與備註','Favorites & notes','お気に入りとメモ','즐겨찾기 및 메모','المفضلة والملاحظات'],
       favorite: ['收藏','收藏','Favorite','お気に入り','즐겨찾기','مفضلة'],
       unfavorite: ['取消收藏','取消收藏','Unfavorite','お気に入り解除','즐겨찾기 해제','إلغاء المفضلة'],
@@ -1252,7 +1187,7 @@
       chainSelectionInvalid: ['请选择1–3条链','請選擇1–3條鏈','Select 1–3 chains','1～3チェーンを選択','1~3개 체인을 선택하세요','اختر 1–3 شبكات'],
       schedulerSummary: ['轮询：{chains} · 正在处理：{current}','輪詢：{chains} · 正在處理：{current}','Polling: {chains} · Processing: {current}','巡回: {chains} · 処理中: {current}','순환: {chains} · 처리 중: {current}','الاستطلاع: {chains} · المعالجة: {current}'],
       coverageDual: ['双源已接入','雙源已接入','Secondary sources wired','複数ソース接続済み','보조 데이터 연결됨','مصادر إضافية موصولة'],
-      coverageSingle: ['仅AVE数据','僅AVE資料','AVE data only','AVEデータのみ','AVE 데이터만','بيانات AVE فقط'],
+      coverageSingle: ['仅行情源数据', '僅行情源資料', 'the market source data only', 'データ元データのみ', '시세 소스 데이터만', 'بيانات مصدر السوق فقط'],
       coverageLine: ['{window}：到期{eligible} / 完成{completed} / 缺失{missing} · 中位涨跌{median}','{window}：到期{eligible} / 完成{completed} / 缺失{missing} · 中位漲跌{median}','{window}: due {eligible} / complete {completed} / missing {missing} · median {median}','{window}: 対象{eligible} / 完了{completed} / 欠損{missing} · 中央値{median}','{window}: 도래 {eligible} / 완료 {completed} / 누락 {missing} · 중앙값 {median}','{window}: مستحق {eligible} / مكتمل {completed} / مفقود {missing} · الوسيط {median}'],
       rejectedCohort: ['拒绝组抽样对照','拒絕組抽樣對照','Sampled rejected cohort','除外群の抽出比較','제외 표본 비교','عينة المجموعة المرفوضة'],
       newCandidateAlert: ['发现新候选，已加入候选池','發現新候選，已加入候選池','New candidate added to the pool','新しい候補をプールに追加','새 후보가 풀에 추가됨','تمت إضافة مرشح جديد إلى المجموعة'],
@@ -1268,30 +1203,16 @@
       chainAria: ['扫描链路切换', '掃描鏈路切換', 'Scan chain switcher', 'スキャンチェーン切替', '스캔 체인 전환', 'مبدّل شبكة المسح'],
       chainTitle: ['扫描链路', '掃描鏈路', 'Scan chain', 'スキャン対象', '스캔 체인', 'شبكة المسح'],
       chainLoading: ['正在读取后端支持的链', '正在讀取後端支援的鏈', 'Reading supported chains', '対応チェーンを読み込み中', '지원 체인 확인 중', 'جارٍ قراءة الشبكات المدعومة'],
-      aveApiLabel: ['AVE API', 'AVE API', 'AVE API', 'AVE API', 'AVE API', 'واجهة AVE'],
-      aveApiPlaceholder: ['输入 API Key', '輸入 API Key', 'Enter API key', 'APIキーを入力', 'API 키 입력', 'أدخل مفتاح API'],
-      aveApiSubmitAria: ['确认并连接 AVE API', '確認並連接 AVE API', 'Confirm and connect AVE API', 'AVE APIを確認して接続', 'AVE API 확인 및 연결', 'تأكيد وربط واجهة AVE'],
-      aveApiSubmitText: ['确认', '確認', 'Confirm', '確認', '확인', 'تأكيد'],
-      aveApiLocalOnly: ['仅发往本机', '僅傳送至本機', 'Sent locally only', 'ローカル送信のみ', '로컬로만 전송', 'يُرسل محليًا فقط'],
-      aveApiRequired: ['请输入 API Key', '請輸入 API Key', 'Enter an API key', 'APIキーを入力してください', 'API 키를 입력하세요', 'أدخل مفتاح API'],
-      aveApiConnecting: ['正在连接……', '正在連接……', 'Connecting…', '接続中…', '연결 중…', 'جارٍ الاتصال…'],
-      aveApiConnected: ['已连接，正在安排扫描', '已連接，正在安排掃描', 'Verified; scan requested', '確認済み。スキャンを開始します', '검증 완료, 스캔 시작 요청됨', 'تم التحقق؛ تم طلب المسح'],
-      aveApiGetKey: ['首次使用 / 创建 API', '首次使用 / 建立 API', 'First use / Create API', '初回設定 / API作成', '첫 사용 / API 생성', 'الاستخدام الأول / إنشاء API'],
       closeAction: ['关闭', '關閉', 'Close', '閉じる', '닫기', 'إغلاق'],
-      aveApiConfigured: ['已配置，可更换 Key', '已設定，可更換 Key', 'Configured; you can replace the key', '設定済み。キーを変更できます', '설정됨; 키 변경 가능', 'تم الإعداد؛ يمكنك تغيير المفتاح'],
-      aveApiVerified: ['已连接', '已連接', 'Connected', '接続済み', '연결됨', 'متصل'],
-      aveApiInvalid: ['Key 无效或已失效，请检查后重试', 'Key 無效或已失效，請檢查後重試', 'Invalid or expired key; check and retry', 'キーが無効または期限切れです', '키가 잘못되었거나 만료되었습니다', 'المفتاح غير صالح أو منتهي الصلاحية'],
-      aveApiPermission: ['该 Key 没有此链数据的读取权限', '此 Key 沒有此鏈資料的讀取權限', 'This key cannot read data for this chain', 'このキーには対象チェーンの読取権限がありません', '이 키에는 해당 체인의 읽기 권한이 없습니다', 'لا يملك المفتاح إذن قراءة بيانات هذه الشبكة'],
-      aveApiRate: ['AVE 暂时限流，请稍后重试', 'AVE 暫時限流，請稍後重試', 'AVE rate limit reached; retry later', 'AVEの制限中です。しばらくして再試行してください', 'AVE 요청 제한, 나중에 다시 시도하세요', 'تم بلوغ حد طلبات AVE؛ أعد المحاولة لاحقًا'],
-      aveApiRateCountdown: ['AVE 已限流，请勿重复点击；约 {seconds} 秒后再试', 'AVE 已限流，請勿重複點擊；約 {seconds} 秒後再試', 'AVE is rate-limited. Do not retry repeatedly; try again in about {seconds}s.', 'AVEの制限中です。連続操作せず、約{seconds}秒後に再試行してください。', 'AVE 요청 제한 중입니다. 반복 클릭하지 말고 약 {seconds}초 후 다시 시도하세요.', 'تم تقييد AVE. لا تكرر المحاولة؛ حاول مجددًا بعد نحو {seconds} ثانية.'],
-      aveApiNetwork: ['无法连接 AVE；Windows 请开启系统代理/VPN，完全退出雷达后重新打开', '無法連接 AVE；Windows 請開啟系統代理/VPN，完全退出雷達後重新開啟', 'Cannot reach AVE. On Windows, enable the system proxy/VPN, fully exit Radar, then reopen it.', 'AVEに接続できません。Windowsではシステムプロキシ/VPNを有効にし、Radarを終了して再起動してください。', 'AVE에 연결할 수 없습니다. Windows 시스템 프록시/VPN을 켠 뒤 레이더를 완전히 종료하고 다시 여세요.', 'تعذر الاتصال بـ AVE. في Windows فعّل وكيل النظام أو VPN، ثم أغلق الرادار بالكامل وأعد فتحه.'],
-      aveApiInstall: ['请先运行“安装并启动”入口', '請先執行「安裝並啟動」入口', 'Run the installer and launcher first', '先にインストーラーを実行してください', '설치 및 실행 파일을 먼저 실행하세요', 'شغّل المثبّت أولًا'],
-      aveApiFailed: ['连接失败，请检查密钥后重试', '連接失敗，請檢查密鑰後重試', 'Connection failed; check the key and retry', '接続失敗。キーを確認して再試行してください', '연결 실패; 키를 확인하고 다시 시도하세요', 'فشل الاتصال؛ تحقق من المفتاح وحاول مجددًا'],
+      apiRateLimited: ['行情源请求频率受限，等待下一轮自动重试', '行情源請求頻率受限，等待下一輪自動重試', 'The market source is rate-limited; the next cycle retries automatically.', 'データ元が制限中。次のサイクルで自動再試行します。', '시세 소스 요청 제한; 다음 주기에 자동 재시도합니다.', 'مصدر السوق مقيّد المعدل؛ دورة لاحقة تعيد المحاولة تلقائيًا.'],
+      apiRetryAt: ['自动复查不早于 {time}', '自動複查不早於 {time}', 'Automatic recheck no earlier than {time}', '{time}以降に自動再確認', '{time} 이후 자동 재확인', 'إعادة التحقق تلقائيًا بعد {time}'],
+      apiRateCountdown: ['行情源 已限流，请勿重复点击；约 {seconds} 秒后再试',  '行情源 已限流，請勿重複點擊；約 {seconds} 秒後再試',  'the market source is rate-limited. Do not retry repeatedly; try again in about {seconds}s.',  'データ元の制限中です。連続操作せず、約{seconds}秒後に再試行してください。',  '시세 소스 요청 제한 중입니다. 반복 클릭하지 말고 약 {seconds}초 후 다시 시도하세요.',  'تم تقييد مصدر السوق. لا تكرر المحاولة؛ حاول مجددًا بعد نحو {seconds} ثانية.'],
+      apiNetworkError: ['无法连接 行情源；Windows 请开启系统代理/VPN，完全退出雷达后重新打开',  '無法連接 行情源；Windows 請開啟系統代理/VPN，完全退出雷達後重新開啟',  'Cannot reach the market source. On Windows, enable the system proxy/VPN, fully exit Radar, then reopen it.',  'データ元に接続できません。Windowsではシステムプロキシ/VPNを有効にし、Radarを終了して再起動してください。',  '시세 소스에 연결할 수 없습니다. Windows 시스템 프록시/VPN을 켠 뒤 레이더를 완전히 종료하고 다시 여세요.',  'تعذر الاتصال بـ مصدر السوق. في Windows فعّل وكيل النظام أو VPN، ثم أغلق الرادار بالكامل وأعد فتحه.'],
       runtimeAria: ['运行状态', '運行狀態', 'Runtime status', '稼働状態', '운영 상태', 'حالة التشغيل'],
       localService: ['本地服务', '本地服務', 'Local service', 'ローカルサービス', '로컬 서비스', 'الخدمة المحلية'],
       connecting: ['正在连接', '正在連線', 'Connecting', '接続中', '연결 중', 'جارٍ الاتصال'],
       port3791: ['端口3791', '連接埠3791', 'Port 3791', 'ポート3791', '포트 3791', 'المنفذ 3791'],
-      aveSource: ['AVE数据源', 'AVE資料源', 'AVE source', 'AVEデータソース', 'AVE 데이터 소스', 'مصدر بيانات AVE'],
+      sourceProvider: ['数据源', '資料源', 'Market source', 'データソース', '데이터 소스', 'مصدر البيانات'],
       notRead: ['尚未读取', '尚未讀取', 'Not read yet', '未取得', '아직 읽지 않음', 'لم تُقرأ بعد'],
       lastAttemptLabel: ['最近扫描尝试', '最近掃描嘗試', 'Last scan attempt', '最終スキャン試行', '최근 스캔 시도', 'آخر محاولة مسح'],
       noRecord: ['暂无记录', '暫無記錄', 'No record', '記録なし', '기록 없음', 'لا يوجد سجل'],
@@ -1323,7 +1244,7 @@
       completedRounds: ['成功完成的历史轮次', '歷史成功完成輪次', 'Historically completed cycles', '過去の完了サイクル', '성공적으로 완료된 역사적 주기', 'الدورات المكتملة تاريخيًا'],
       discoveredTokens: ['发现代币', '發現代幣', 'Tokens found', '検出トークン', '발견 토큰', 'الرموز المكتشفة'],
       currentRound: ['本轮', '本輪', 'This cycle', '今回', '현재 주기', 'هذه الدورة'],
-      aveReturned: ['本轮AVE返回数量', '本輪AVE回傳數量', 'Returned by AVE this cycle', '今回のAVE取得数', '이번 주기 AVE 반환 수', 'ما أعاده AVE في هذه الدورة'],
+      roundReturned: ['本轮返回数量', '本輪回傳數量', 'Returned this cycle', '今回の取得数', '이번 주기 반환 수', 'ما أُعيد في هذه الدورة'],
       prequalifiedLabel: ['初筛通过', '初篩通過', 'Pre-screened', '一次審査通過', '1차 필터 통과', 'اجتازت الفحص الأولي'],
       awaitingAudit: ['等待或已进入深度审计', '等待或已進入深度審計', 'Waiting for or in deep audit', '深度審査待ちまたは実行中', '심층 감사 대기 또는 진행 중', 'بانتظار التدقيق العميق أو قيده'],
       deepAuditLabel: ['深度审计', '深度審計', 'Deep audits', '深度審査', '심층 감사', 'تدقيق عميق'],
@@ -1387,7 +1308,7 @@
       statusAuth: ['等待授权', '等待授權', 'Authorization needed', '認証待ち', '인증 필요', 'يلزم التفويض'],
       statusStateError: ['状态异常', '狀態異常', 'State error', '状態異常', '상태 오류', 'خطأ في الحالة'],
       statusUnknown: ['状态未知', '狀態未知', 'Unknown status', '状態不明', '상태 알 수 없음', 'حالة غير معروفة'],
-      rateLimitedSafe: ['AVE请求频率受限，系统正在等待下一轮自动重试', 'AVE請求頻率受限，系統正等待下一輪自動重試', 'AVE rate limit reached; waiting for the next automatic retry', 'AVEのレート制限中。次回の自動再試行を待機しています', 'AVE 속도 제한으로 다음 자동 재시도를 기다립니다', 'تم بلوغ حد AVE؛ بانتظار إعادة المحاولة تلقائيًا'],
+      rateLimitedSafe: ['行情源请求频率受限，系统正在等待下一轮自动重试',  '行情源請求頻率受限，系統正等待下一輪自動重試',  'the market source rate limit reached; waiting for the next automatic retry',  'データ元のレート制限中。次回の自動再試行を待機しています',  '시세 소스 속도 제한으로 다음 자동 재시도를 기다립니다',  'تم بلوغ حد مصدر السوق؛ بانتظار إعادة المحاولة تلقائيًا'],
       requestFailedSafe: ['数据请求暂时失败，系统将在下一轮自动重试', '資料請求暫時失敗，系統將於下一輪自動重試', 'Data request failed temporarily; the next cycle will retry', 'データ取得に一時失敗。次回に自動再試行します', '데이터 요청이 일시 실패했으며 다음 주기에 재시도합니다', 'فشل طلب البيانات مؤقتًا؛ ستتم إعادة المحاولة في الدورة التالية'],
       sourceChanged: ['数据请求状态发生变化', '資料請求狀態發生變化', 'Data request status changed', 'データ取得状態が変化しました', '데이터 요청 상태가 변경되었습니다', 'تغيرت حالة طلب البيانات'],
       durationSeconds: ['{n}秒', '{n}秒', '{n}s', '{n}秒', '{n}초', '{n}ث'],
@@ -1423,10 +1344,7 @@
       scanBusy: ['当前扫描尚未结束，请稍后再切换', '目前掃描尚未結束，請稍後再切換', 'A scan is still running; switch later', 'スキャン中です。後で切替えてください', '스캔이 진행 중입니다. 잠시 후 전환하세요', 'المسح جارٍ؛ بدّل لاحقًا'],
       switchFailed: ['链路切换失败，请稍后重试', '鏈路切換失敗，請稍後重試', 'Chain switch failed; try again later', '切替に失敗。後でもう一度お試しください', '체인 전환 실패; 나중에 다시 시도하세요', 'فشل تبديل الشبكة؛ حاول لاحقًا'],
       copyContract: ['复制合约', '複製合約', 'Copy contract', 'コントラクトをコピー', '계약 복사', 'نسخ العقد'],
-      aveEntry: ['打开 AVE', '開啟 AVE', 'Open AVE', 'AVEを開く', 'AVE 열기', 'فتح AVE'],
-      aveEntryHint: ['打开 AVE · 复制 CA 后搜索', '開啟 AVE · 複製 CA 後搜尋', 'Open AVE · Copy the CA, then search', 'AVEを開く · CAをコピーして検索', 'AVE 열기 · CA 복사 후 검색', 'افتح AVE · انسخ عنوان العقد ثم ابحث'],
-      aveTrade: ["详细行情查看","詳細行情查看","View market details","相場の詳細","상세 시세 보기","عرض تفاصيل السوق"],
-      aveTokenHint: ['查看代币 K 线与买卖','查看代幣 K 線與買賣','View token chart and trading','トークンのチャート・取引を表示','토큰 차트·거래 보기','عرض الرسم البياني وتداول العملة'],
+      openChart: ['在公共行情页查看','在公共行情頁查看','View on a public chart','公開チャートで表示','공개 차트에서 보기','عرض على رسم بياني عام'],
       officialX: ['官方X账号', '官方X帳號', 'Official X', '公式X', '공식 X', 'حساب X الرسمي'],
       liveXSearch: ['X实时搜索', 'X即時搜尋', 'Live X search', 'Xリアルタイム検索', 'X 실시간 검색', 'بحث X المباشر'],
       visitWebsite: ['访问官网', '造訪官網', 'Visit website', '公式サイト', '공식 웹사이트', 'زيارة الموقع'],
@@ -1484,19 +1402,19 @@
       providerDiscovery: ['发现源{ok}/{total}', '發現源{ok}/{total}', 'Discovery {ok}/{total}', '発見元 {ok}/{total}', '발견 소스 {ok}/{total}', 'مصدر الاكتشاف {ok}/{total}'],
       providerAudit: ['深审接口{ok}/{total}', '深審介面{ok}/{total}', 'Audit APIs {ok}/{total}', '審査API {ok}/{total}', '심층 감사 API {ok}/{total}', 'واجهات التدقيق {ok}/{total}'],
       providerSecondary: ['外部复核{ok}/{total}', '外部複核{ok}/{total}', 'Secondary checks {ok}/{total}', '外部確認 {ok}/{total}', '외부 검토 {ok}/{total}', 'الفحوص الخارجية {ok}/{total}'],
-      aveOnly: ['当前链仅AVE覆盖', '目前鏈僅AVE覆蓋', 'Only AVE covers this chain', 'このチェーンはAVEのみ', '이 체인은 AVE만 지원', 'هذه الشبكة مغطاة من AVE فقط'],
       checkedAgo: ['检查于{time}', '檢查於{time}', 'Checked {time}', '{time}に確認', '{time} 확인', 'فُحص {time}'],
+      secondaryUnsupported: ['本版本不支持外部复核', '本版本不支持外部複核', 'No secondary check supported in this version', 'このバージョンでは外部確認なし', '이 버전은 외부 검토 미지원', 'لا فحص خارجي في هذه النسخة'],
+      baselineUnreadable: ['{count} 条基线由已退役的行情源定价，当前源无法回读', '{count} 條基線由已退役的行情源定價，當前源無法回讀', '{count} baselines were priced by a retired source and cannot be read back', '退役したソースが付けた{count}件の基準値は読み戻せない', '{count}개 기준가는退役한 소스가 매긴 것으로 현재 소스로는 재확인 불가', '{count} خط أساس سعّرها مصدر متقاعد ولا يمكن قراءتها'],
       providerPartial: ['部分可用', '部分可用', 'Partially available', '一部利用可', '일부 사용 가능', 'متاح جزئيًا'],
       providerNormal: ['正常', '正常', 'Normal', '正常', '정상', 'طبيعي'],
       incompleteRound: ['本轮数据可能不完整', '本輪資料可能不完整', 'This cycle may be incomplete', '今回のデータは不完全な可能性があります', '이번 주기 데이터가 불완전할 수 있습니다', 'قد تكون بيانات هذه الدورة غير مكتملة'],
-      aveNormal: ['AVE接口正常', 'AVE介面正常', 'AVE API is normal', 'AVE API正常', 'AVE API 정상', 'واجهة AVE طبيعية'],
       recentCheck: ['最近检查{time}', '最近檢查{time}', 'Last checked {time}', '最終確認 {time}', '최근 확인 {time}', 'آخر فحص {time}'],
       recentSuccess: ['最近成功 {time}', '最近成功 {time}', 'Last success {time}', '最終成功 {time}', '최근 성공 {time}', 'آخر نجاح {time}'],
       noCheck: ['暂无检查记录', '暫無檢查記錄', 'No check record', '確認記録なし', '확인 기록 없음', 'لا سجل فحص'],
       retryAt: ['预计{time}后恢复', '預計{time}後恢復', 'Expected recovery after {time}', '{time}以降に復旧見込み', '{time} 이후 복구 예상', 'التعافي متوقع بعد {time}'],
       retryWaiting: ['等待自动重试', '等待自動重試', 'Waiting for automatic retry', '自動再試行待ち', '자동 재시도 대기', 'بانتظار إعادة المحاولة تلقائيًا'],
       notAuthorized: ['尚未授权', '尚未授權', 'Not authorized', '未認証', '인증되지 않음', 'غير مفوّض'],
-      configReadOnly: ['需要配置AVE只读接口', '需要設定AVE唯讀介面', 'Configure the AVE read-only API', 'AVE読み取り専用APIの設定が必要', 'AVE 읽기 전용 API 설정 필요', 'يلزم إعداد واجهة AVE للقراءة فقط'],
+      configReadOnly: ['需要配置行情源只读接口',  '需要設定行情源唯讀介面',  'Configure the the market source read-only API',  'データ元読み取り専用APIの設定が必要',  '시세 소스 읽기 전용 API 설정 필요',  'يلزم إعداد واجهة مصدر السوق للقراءة فقط'],
       requestError: ['请求异常', '請求異常', 'Request error', '取得異常', '요청 오류', 'خطأ في الطلب'],
       lastRoundSuccess: ['最近一轮读取成功', '最近一輪讀取成功', 'Latest cycle succeeded', '直近サイクル取得成功', '최근 주기 읽기 성공', 'نجحت الدورة الأخيرة'],
       partialEvidence: ['本轮部分证据不完整，等待自动复查', '本輪部分證據不完整，等待自動複查', 'Some evidence is incomplete; waiting for automatic recheck', '一部証拠が不完全。自動再確認待ち', '일부 증거 불완전; 자동 재검토 대기', 'بعض الأدلة غير مكتملة؛ بانتظار إعادة الفحص'],
@@ -1526,18 +1444,18 @@
       backendConfirmedScanning: ['后端已确认正在执行', '後端已確認正在執行', 'Backend confirms scan is running', 'バックエンドで実行を確認', '백엔드 실행 확인', 'أكدت الخلفية أن المسح جارٍ'],
       noLiveProgress: ['后端未提供实时进度标记', '後端未提供即時進度標記', 'No live progress flag from backend', 'リアルタイム進捗情報なし', '백엔드 실시간 진행 정보 없음', 'لا توفر الخلفية مؤشر تقدم مباشر'],
       noSuccessfulData: ['尚无成功数据', '尚無成功資料', 'No successful data yet', '成功データなし', '성공 데이터 없음', 'لا بيانات ناجحة بعد'],
-      authNotice: ['输入你的 AVE 只读 API Key，点击 ✓ 验证后自动开始扫描。没有 Key 可点击“获取 API Key”。', '輸入你的 AVE 唯讀 API Key，點擊 ✓ 驗證後自動開始掃描。沒有 Key 可點擊「取得 API Key」。', 'Enter your AVE read-only API key and click ✓ to verify and scan. Use “Get an API key” if needed.', 'AVEの読取専用APIキーを入力し、✓で確認するとスキャンが始まります。キー取得リンクも利用できます。', 'AVE 읽기 전용 API 키를 입력하고 ✓를 누르면 검증 후 스캔이 시작됩니다. 키가 없으면 발급 링크를 이용하세요.', 'أدخل مفتاح AVE للقراءة فقط واضغط ✓ للتحقق وبدء المسح. استخدم رابط الحصول على مفتاح عند الحاجة.'],
-      rateNotice: ['AVE请求频率受限。{retry}系统会在后续轮次自动重试，不会下单。', 'AVE請求頻率受限。{retry}系統會在後續輪次自動重試，不會下單。', 'AVE is rate-limited. {retry}A later cycle will retry automatically; no order is placed.', 'AVEのレート制限中。{retry}後続サイクルで自動再試行します。注文はしません。', 'AVE 속도 제한 상태입니다. {retry}다음 주기에서 자동 재시도하며 주문하지 않습니다.', 'AVE محدود المعدل. {retry}ستعيد دورة لاحقة المحاولة تلقائيًا؛ لا أوامر.'],
+      authNotice: ['输入你的 行情源 只读 API Key，点击 ✓ 验证后自动开始扫描。没有 Key 可点击“获取 API Key”。',  '輸入你的 行情源 唯讀 API Key，點擊 ✓ 驗證後自動開始掃描。沒有 Key 可點擊「取得 API Key」。',  'Enter your the market source read-only API key and click ✓ to verify and scan. Use “Get an API key” if needed.',  'データ元の読取専用APIキーを入力し、✓で確認するとスキャンが始まります。キー取得リンクも利用できます。',  '시세 소스 읽기 전용 API 키를 입력하고 ✓를 누르면 검증 후 스캔이 시작됩니다. 키가 없으면 발급 링크를 이용하세요.',  'أدخل مفتاح مصدر السوق للقراءة فقط واضغط ✓ للتحقق وبدء المسح. استخدم رابط الحصول على مفتاح عند الحاجة.'],
+      rateNotice: ['行情源请求频率受限。{retry}系统会在后续轮次自动重试，不会下单。',  '行情源請求頻率受限。{retry}系統會在後續輪次自動重試，不會下單。',  'the market source is rate-limited. {retry}A later cycle will retry automatically; no order is placed.',  'データ元のレート制限中。{retry}後続サイクルで自動再試行します。注文はしません。',  '시세 소스 속도 제한 상태입니다. {retry}다음 주기에서 자동 재시도하며 주문하지 않습니다.',  'مصدر السوق محدود المعدل. {retry}ستعيد دورة لاحقة المحاولة تلقائيًا؛ لا أوامر.'],
       expectedRecovery: ['预计恢复时间：{time}。', '預計恢復時間：{time}。', 'Expected recovery: {time}. ', '復旧見込み：{time}。', '예상 복구 시간: {time}. ', 'التعافي المتوقع: {time}. '],
       scanErrorNotice: ['扫描发生异常：{detail}', '掃描發生異常：{detail}', 'Scan error: {detail}', 'スキャン異常：{detail}', '스캔 오류: {detail}', 'خطأ في المسح: {detail}'],
       waitAutoRetry: ['等待下一轮自动重试', '等待下一輪自動重試', 'Waiting for the next automatic retry', '次回の自動再試行待ち', '다음 자동 재시도 대기', 'بانتظار إعادة المحاولة التالية'],
       scanningNotice: ['正在扫描当前链路并整理证据，请等待本轮完成。页面保留上一轮结果，但会明确标记其审计时间。', '正在掃描目前鏈路並整理證據，請等待本輪完成。頁面保留上一輪結果，但會清楚標記審計時間。', 'Scanning this chain and assembling evidence. The prior result remains visible with its audit time clearly marked.', '現在のチェーンをスキャンし証拠を整理中。前回結果は審査時刻付きで表示します。', '현재 체인을 스캔하고 증거를 정리 중입니다. 이전 결과는 감사 시간과 함께 유지됩니다.', 'جارٍ مسح الشبكة وتجميع الأدلة. تبقى نتيجة الدورة السابقة مع وقت التدقيق بوضوح.'],
       switchingNotice: ['正在切换扫描链路，旧链候选不会混入新链结果。', '正在切換掃描鏈路，舊鏈候選不會混入新鏈結果。', 'Switching scan chain; old-chain candidates will not mix with new results.', 'チェーン切替中。旧チェーン候補は新結果に混在しません。', '스캔 체인 전환 중; 이전 체인 후보는 새 결과에 섞이지 않습니다.', 'جارٍ تبديل شبكة المسح؛ لن تختلط مرشحات الشبكة القديمة بالنتائج الجديدة.'],
-      degradedNotice: ['本轮有部分AVE、GoPlus或DexScreener证据缺失，未知项不会冒充安全；系统会自动复查。交易执行永久关闭。', '本輪有部分AVE、GoPlus或DexScreener證據缺失，未知項不會視為安全；系統會自動複查。交易執行永久關閉。', 'Some AVE, GoPlus or DexScreener evidence is missing. Unknowns never count as safe; recheck is automatic. Trading is permanently disabled.', 'AVE／GoPlus／DexScreenerの一部証拠が不足。不明は安全扱いせず自動再確認します。取引は常時無効です。', '일부 AVE, GoPlus 또는 DexScreener 증거가 누락되었습니다. 미확인은 안전으로 처리하지 않으며 자동 재검토합니다. 거래는 영구 비활성입니다.', 'بعض أدلة AVE أو GoPlus أو DexScreener مفقودة. المجهول لا يُعد آمنًا وستتم إعادة الفحص؛ التداول معطل دائمًا.'],
+      degradedNotice: ['本轮有部分行情源、GoPlus或DexScreener证据缺失，未知项不会冒充安全；系统会自动复查。交易执行永久关闭。',  '本輪有部分行情源、GoPlus或DexScreener證據缺失，未知項不會視為安全；系統會自動複查。交易執行永久關閉。',  'Some the market source, GoPlus or DexScreener evidence is missing. Unknowns never count as safe; recheck is automatic. Trading is permanently disabled.',  'データ元／GoPlus／DexScreenerの一部証拠が不足。不明は安全扱いせず自動再確認します。取引は常時無効です。',  '일부 시세 소스, GoPlus 또는 DexScreener 증거가 누락되었습니다. 미확인은 안전으로 처리하지 않으며 자동 재검토합니다. 거래는 영구 비활성입니다.',  'بعض أدلة مصدر السوق أو GoPlus أو DexScreener مفقودة. المجهول لا يُعد آمنًا وستتم إعادة الفحص؛ التداول معطل دائمًا.'],
       runningPartialNotice: ['扫描器正在运行，但本轮数据尚不完整（{detail}）；请等待完整复查。交易执行永久关闭。', '掃描器正在運行，但本輪資料尚不完整（{detail}）；請等待完整複查。交易執行永久關閉。', 'Scanner is running, but this cycle is incomplete ({detail}); wait for recheck. Trading is permanently disabled.', 'スキャン稼働中ですが今回データは不完全（{detail}）。再確認を待ってください。取引は常時無効です。', '스캐너는 실행 중이나 이번 데이터가 불완전합니다({detail}). 재검토를 기다리세요. 거래는 영구 비활성입니다.', 'الماسح يعمل لكن الدورة غير مكتملة ({detail})؛ انتظر إعادة الفحص. التداول معطل دائمًا.'],
       runningNotice: ['扫描器运行中 · 交易执行永久关闭 · X社区采用人工点击复核，不会因为社交热度自动触发交易。', '掃描器運行中 · 交易執行永久關閉 · X社群採人工點擊複核，不會因社交熱度自動觸發交易。', 'Scanner running · trading permanently disabled · X is reviewed manually and social hype never triggers a trade.', 'スキャン稼働中・取引は常時無効・Xは手動確認し、話題性で取引しません。', '스캐너 실행 중 · 거래 영구 비활성 · X는 수동 검토하며 소셜 열기로 거래하지 않습니다.', 'الماسح يعمل · التداول معطل دائمًا · تتم مراجعة X يدويًا ولا تحفز الضجة أي تداول.'],
       initialNotice: ['雷达正在初始化，请等待首次扫描完成。', '雷達正在初始化，請等待首次掃描完成。', 'Radar is initializing; wait for the first scan.', 'レーダー初期化中。初回スキャンを待ってください。', '레이더 초기화 중; 첫 스캔을 기다리세요.', 'جارٍ تهيئة الرادار؛ انتظر أول مسح.'],
-      eventRateLimited: ['当时触发AVE请求频率限制，系统已等待后续轮次重试', '當時觸發AVE請求頻率限制，系統已等待後續輪次重試', 'AVE was rate-limited; the system queued a later retry', 'AVEレート制限が発生し、後続サイクルで再試行待ち', 'AVE 속도 제한 발생; 다음 주기 재시도 대기', 'تم بلوغ حد AVE؛ أُدرجت إعادة المحاولة لدورة لاحقة'],
+      eventRateLimited: ['当时触发行情源请求频率限制，系统已等待后续轮次重试',  '當時觸發行情源請求頻率限制，系統已等待後續輪次重試',  'the market source was rate-limited; the system queued a later retry',  'データ元レート制限が発生し、後続サイクルで再試行待ち',  '시세 소스 속도 제한 발생; 다음 주기 재시도 대기',  'تم بلوغ حد مصدر السوق؛ أُدرجت إعادة المحاولة لدورة لاحقة'],
       eventRequestFailed: ['当时数据请求失败，系统已留到下一轮重试', '當時資料請求失敗，系統已留到下一輪重試', 'The data request failed and was left for the next cycle', 'データ取得失敗。次回サイクルへ繰越', '데이터 요청 실패; 다음 주기로 이월', 'فشل طلب البيانات وأُجّل للدورة التالية'],
       eventChanged: ['雷达状态发生变化', '雷達狀態發生變化', 'Radar status changed', 'レーダー状態が変化', '레이더 상태 변경', 'تغيرت حالة الرادار'],
       cycleSummary: ['最近尝试 {time} · 单轮耗时{ms}毫秒', '最近嘗試 {time} · 單輪耗時{ms}毫秒', 'Last attempt {time} · cycle {ms} ms', '最終試行 {time}・所要{ms}ms', '최근 시도 {time} · 주기 {ms}ms', 'آخر محاولة {time} · مدة الدورة {ms} مللي ثانية'],
@@ -1565,7 +1483,7 @@
       sourceConflict: ['多源数据存在冲突，等待重查', '多源資料存在衝突，等待重查', 'Data sources conflict; waiting for recheck', '複数ソースが不一致。再確認待ち', '데이터 소스 충돌; 재검토 대기', 'توجد تعارضات بين المصادر؛ بانتظار إعادة الفحص'],
       noReasonWaiting: ['深度审计数据暂时不完整，正在等待下一轮复查', '深度審計資料暫時不完整，正在等待下一輪複查', 'Deep-audit data is incomplete; waiting for the next recheck', '深度審査データ不完全。次回確認待ち', '심층 감사 데이터 불완전; 다음 재검토 대기', 'بيانات التدقيق غير مكتملة؛ بانتظار الإعادة التالية'],
       chainPassNextX: ['链上硬门全部通过，下一步请人工检查X社区', '鏈上硬門全部通過，下一步請人工檢查X社群', 'All on-chain hard gates passed; review X manually next', 'オンチェーン必須条件通過。次にXを手動確認', '온체인 필수 조건 통과; 다음은 X 수동 확인', 'اجتازت كل البوابات على السلسلة؛ راجع X يدويًا'],
-      noFailureDetail: ['没有可解释的失败明细，请在AVE详情中复核', '沒有可解釋的失敗明細，請在AVE詳情中複核', 'No explainable failure detail; review AVE details', '説明可能な失敗詳細なし。AVE詳細を確認', '설명 가능한 실패 상세 없음; AVE 상세 확인', 'لا تفاصيل فشل قابلة للتفسير؛ راجع تفاصيل AVE']
+      noFailureDetail: ['没有可解释的失败明细，请在行情源详情中复核',  '沒有可解釋的失敗明細，請在行情源詳情中複核',  'No explainable failure detail; review the market source details',  '説明可能な失敗詳細なし。データ元詳細を確認',  '설명 가능한 실패 상세 없음; 시세 소스 상세 확인',  'لا تفاصيل فشل قابلة للتفسير؛ راجع تفاصيل مصدر السوق']
     };
 
     let currentLocale = 'zh-CN';
@@ -1607,10 +1525,6 @@
           renderChainSwitcher(null);
           renderTelemetry();
           byId('notice').textContent = t('loadingStatus');
-        }
-        if (!aveBusy && aveFeedback) {
-          delete byId('ave-config-status').dataset.i18n;
-          byId('ave-config-status').textContent = aveFeedbackText(aveFeedback);
         }
       }
     }
@@ -1697,11 +1611,10 @@
       RATE_LIMITED: 'statusRateLimited',
       ERROR: 'statusError',
       AUTH_REQUIRED: 'statusAuth',
-      AVE_AUTH_REQUIRED: 'statusAuth',
-      BUDGET_PAUSED: 'aveBudgetPaused',
-      HOURLY_BUDGET_PAUSED: 'aveHourlyPaused',
-      TOTAL_BUDGET_PAUSED: 'aveTotalPaused',
-      QUOTA_PAUSED: 'aveQuotaPaused',
+      BUDGET_PAUSED: 'budgetPaused',
+      HOURLY_BUDGET_PAUSED: 'hourlyPaused',
+      TOTAL_BUDGET_PAUSED: 'totalPaused',
+      QUOTA_PAUSED: 'quotaPaused',
       STATE_ERROR: 'statusStateError'
     };
 
@@ -1867,7 +1780,7 @@
         desktopAlert(event.chain + ':' + event.type + ':' + event.at, t(event.type === 'CANDIDATE_NEW' ? 'newCandidateAlert' : 'riskAlert'), event.message, event.at);
       });
       const lastSuccess = scheduler.lastSuccessAt || data.lastSuccessAt;
-      if (lastSuccess && Date.now() - lastSuccess > 10 * 60000 && data.aveConnection && data.aveConnection.configured) {
+      if (lastSuccess && Date.now() - lastSuccess > 10 * 60000) {
         desktopAlert('scanner-stale:' + lastSuccess, t('failureAlert'), t('appTitle'), Date.now());
       }
     }
@@ -1941,8 +1854,8 @@
         secondary.security.fatal.forEach(function (risk) { add('GoPlus一票否决：' + safeMessage(risk.reason, risk.field || '发现致命合约风险')); });
       }
       if (Array.isArray(secondary.conflicts)) secondary.conflicts.forEach(function (conflict) {
-        if (conflict.type === 'MARKET_MISMATCH') add('多源数据冲突：AVE与DexScreener的' + safeMessage(conflict.field, '市场数据') + '差异过大，等待重查');
-        else if (conflict.type === 'SECURITY_MISMATCH') add('多源数据冲突：AVE与GoPlus的' + safeMessage(conflict.field, '安全字段') + '结论冲突，等待重查');
+        if (conflict.type === 'MARKET_MISMATCH') add('多源数据冲突：行情源与DexScreener的' + safeMessage(conflict.field, '市场数据') + '差异过大，等待重查');
+        else if (conflict.type === 'SECURITY_MISMATCH') add('多源数据冲突：行情源与GoPlus的' + safeMessage(conflict.field, '安全字段') + '结论冲突，等待重查');
         else if (conflict.type === 'WEBSITE_MISMATCH') add('不同数据源给出的官网域名不同，请人工辨别');
       });
       if (secondaryCovered && secondary.status === 'DEGRADED') add('GoPlus或DexScreener证据不完整，未知值不会按安全处理');
@@ -1976,12 +1889,12 @@
           (deep.chartRisk && deep.chartRisk.reasons || ['形态数据待复核']).forEach(add);
         } else if (code === 'observation') {
           add(safeMessage(observation.reason, '5分钟盘面观察未通过') + '；5分钟涨跌' + formatPercent(observation.return5m) + '，最大回撤' + formatPercent(observation.maxDrawdown) + '，单根量能占比' + formatPercent(observation.volumeConcentration));
-        } else add('存在尚未中文化的审计项，请在AVE详情中复核');
+        } else add('存在尚未中文化的审计项，请在审计详情中复核');
       });
 
       if (!reasons.length) add(backendDisposition(row) === 'waiting'
         ? '深度审计数据暂时不完整，正在等待下一轮复查'
-        : deep.chainPass ? '链上硬门全部通过，下一步请人工检查X社区' : '没有可解释的失败明细，请在AVE详情中复核');
+        : deep.chainPass ? '链上硬门全部通过，下一步请人工检查X社区' : '没有可解释的失败明细，请在审计详情中复核');
       return reasons;
     }
 
@@ -2261,23 +2174,21 @@
       return '';
     }
 
-    // General invite entry; token actions use the official Pro token route below.
-    // Public routing only: never append credentials or submit orders.
-    const AVE_INVITE_URL = 'https://share.ave.ai?lang=zh-cn&code=0001';
-    const AVE_REFERRAL_CODE = '0001';
-
-    // Slugs confirmed in AVE's public chain configuration. Unknown chains must not
-    // silently fall back to BSC. This is a link map, not an API trading-support claim.
-    const AVE_EVM_CHAINS = new Set(['bsc', 'eth', 'base', 'robinhood']);
-    function aveTokenUrl(chain, address) {
+    // Where a card opens. A neutral public explorer, chosen because it is not a
+    // market provider this radar measures with - a link must never read as an
+    // endorsement of one ruler. It carries no credentials and no order, and an
+    // unknown chain yields null rather than silently pointing somewhere else.
+    const EXPLORER_SLUGS = { sol: 'solana', ethereum: 'ethereum', bsc: 'bsc' };
+    function explorerUrl(chain, address) {
       if (typeof chain !== 'string' || typeof address !== 'string') return null;
-      const slug = ({ sol: 'solana', ethereum: 'eth' })[chain.trim().toLowerCase()] || chain.trim().toLowerCase();
+      const slug = EXPLORER_SLUGS[chain.trim().toLowerCase()];
+      if (!slug) return null;
       const ca = address.trim();
-      if (slug === 'solana') {
-        if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(ca)) return null;
-      } else if (!AVE_EVM_CHAINS.has(slug) || !/^0x[0-9a-fA-F]{40}$/.test(ca)) return null;
-      return 'https://pro.ave.ai/token/' + encodeURIComponent(ca) + '-' + slug + '?ref=' + AVE_REFERRAL_CODE;
+      if (slug === 'solana') { if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(ca)) return null; }
+      else if (!/^0x[0-9a-fA-F]{40}$/.test(ca)) return null;
+      return 'https://dexscreener.com/' + slug + '/' + encodeURIComponent(ca);
     }
+    const EXPLORER_FALLBACK_URL = 'https://dexscreener.com';
 
     function actionLinks(row) {
       const address = String(row.address || '');
@@ -2287,10 +2198,10 @@
       const officialX = twitter ? 'https://x.com/' + encodeURIComponent(twitter) : '';
       const searchX = 'https://x.com/search?q=' + encodeURIComponent(address + ' OR $' + symbol) + '&src=typed_query&f=live';
       const website = safeUrl(row.info && row.info.website);
-      const tokenUrl = aveTokenUrl(row.chain, address);
+      const tokenUrl = explorerUrl(row.chain, address);
       let result = '<div class="links">';
       result += '<button class="mini-button" type="button" data-action="copy" data-address="' + encodedData + '">' + escapeHtml(t('copyContract')) + '</button>';
-      result += '<a href="' + escapeHtml(tokenUrl || AVE_INVITE_URL) + '" target="_blank" rel="noopener noreferrer" title="' + escapeHtml(t(tokenUrl ? 'aveTokenHint' : 'aveEntryHint')) + '">' + escapeHtml(t(tokenUrl ? 'aveTrade' : 'aveEntry')) + '</a>';
+      result += '<a href="' + escapeHtml(tokenUrl || EXPLORER_FALLBACK_URL) + '" target="_blank" rel="noopener noreferrer" title="' + escapeHtml(t('openChart')) + '">' + escapeHtml(t('openChart')) + '</a>';
       if (officialX) result += '<a href="' + escapeHtml(officialX) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(t('officialX')) + '</a>';
       result += '<a href="' + escapeHtml(searchX) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(t('liveXSearch')) + '</a>';
       if (website) result += '<a href="' + escapeHtml(website) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(t('visitWebsite')) + '</a>';
@@ -2300,8 +2211,8 @@
     }
 
     function radarLinks(row) {
-      const url = aveTokenUrl(row.chain, row.address);
-      return '<div class="links"><a class="mini-button primary" href="' + escapeHtml(url || AVE_INVITE_URL) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(t(url ? 'aveTrade' : 'aveEntry')) + '</a>'
+      const url = explorerUrl(row.chain, row.address);
+      return '<div class="links"><a class="mini-button primary" href="' + escapeHtml(url || EXPLORER_FALLBACK_URL) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(t('openChart')) + '</a>'
         + '<button class="mini-button" type="button" data-action="copy" data-address="' + encodeURIComponent(row.address) + '">' + escapeHtml(t('copyContract')) + '</button></div>';
     }
 
@@ -2438,19 +2349,11 @@
     }
 
     function providerStatus(data) {
-      if (data.scanProvider === 'AVE') {
-        const cooldown = data.aveMarket?.nextAllowedAt || 0;
-        if (data.aveMarket?.pauseCode === 'AVE_RATE_LIMITED' && cooldown > Date.now()) {
-          return { title: t('aveApiRate'), detail: t('aveRetryAt', { time: formatClock(cooldown) }), tone: 'warn' };
-        }
-        if (data.status === 'RATE_LIMITED' && cooldown <= Date.now()) return { title: t('aveRetryReady'), detail: 'AVE', tone: 'warn' };
-        if (data.status === 'DEGRADED') return { title: t('avePartial'), detail: 'AVE', tone: 'warn' };
-        const key = { AVE_AUTH_REQUIRED: 'statusAuth', BUDGET_PAUSED: 'aveBudgetPaused', QUOTA_PAUSED: 'aveQuotaPaused',
-          HOURLY_BUDGET_PAUSED: 'aveHourlyPaused', TOTAL_BUDGET_PAUSED: 'aveTotalPaused',
-          RATE_LIMITED: 'aveApiRate', ERROR: 'aveApiNetwork' }[data.status];
-        if (key) return { title: t(key), detail: 'AVE', tone: 'warn' };
-        const observed = data.aveMarket?.chains?.[activeChain(data)]?.state === 'observed';
-        return { title: t(observed ? 'providerNormal' : 'waitingState'), detail: t(observed ? 'avePollingHealthy' : 'aveAwaitingFirstScan'), tone: observed ? 'good' : 'warn' };
+      // One market source now: the shared token bucket. Its client never sleeps
+      // inside the request lane, so the only wait it can impose is the cooldown,
+      // and that is stated with a real clock rather than a bare "rate limited".
+      if (data.market?.pauseCode === 'SOURCE_COOLING' && number(data.market?.nextAllowedAt) > Date.now()) {
+        return { title: t('apiRateLimited'), detail: t('apiRetryAt', { time: formatClock(data.market.nextAllowedAt) }), tone: 'warn' };
       }
       const health = data.sourceHealth || {};
       const discovery = health.discovery;
@@ -2468,18 +2371,18 @@
         if (discoveryEndpoints.length) pieces.push(t('providerDiscovery', { ok: discoveryOk, total: discoveryEndpoints.length }));
         if (auditEndpoints.length) pieces.push(t('providerAudit', { ok: auditOk, total: auditEndpoints.length }));
         if (secondaryCovered.length) pieces.push(t('providerSecondary', { ok: secondaryOk, total: secondaryCovered.length }));
-        else if (secondaryEndpoints.length) pieces.push(t('aveOnly'));
+        else if (secondaryEndpoints.length) pieces.push(t('secondaryUnsupported'));
         const checkedAt = Math.max(number(discovery && discovery.checkedAt), number(audit && audit.checkedAt), number(secondary && secondary.checkedAt));
         if (checkedAt) pieces.push(t('checkedAgo', { time: relativeTime(checkedAt) }));
         const incomplete = discovery && discovery.complete === false || audit && audit.complete === false
           || secondaryCovered.length && secondary && secondary.complete === false;
         if (incomplete) return { title: t('providerPartial'), detail: pieces.join(' · ') || t('incompleteRound'), tone: 'warn' };
-        return { title: t('providerNormal'), detail: pieces.join(' · ') || t('aveNormal'), tone: 'good' };
+        return { title: t('providerNormal'), detail: pieces.join(' · ') || t('lastRoundSuccess'), tone: 'good' };
       }
       if (data.status === 'RUNNING') return { title: t('providerNormal'), detail: t('lastRoundSuccess'), tone: 'good' };
       if (data.status === 'DEGRADED') return { title: t('providerPartial'), detail: t('partialEvidence'), tone: 'warn' };
       if (data.status === 'SCANNING' || data.status === 'SWITCHING') return { title: t('reading'), detail: t('waitingRound'), tone: 'info' };
-      if (data.status === 'RATE_LIMITED') return { title: t('statusRateLimited'), detail: data.retryAt ? t('retryAt', { time: formatClock(data.retryAt) }) : t('retryWaiting'), tone: 'warn' };
+      if (data.status === 'RATE_LIMITED') return { title: t('apiRateLimited'), detail: data.retryAt ? t('apiRetryAt', { time: formatClock(data.retryAt) }) : t('retryWaiting'), tone: 'warn' };
       if (data.status === 'AUTH_REQUIRED') return { title: t('notAuthorized'), detail: t('configReadOnly'), tone: 'warn' };
       if (data.status === 'STARTING') return { title: t('initializing'), detail: t('waitingFirstScan'), tone: 'warn' };
       return { title: t('requestError'), detail: safeMessage(data.error, t('waitAutoRetry')), tone: 'bad' };
@@ -2568,7 +2471,14 @@
       byId('serviceDetail').textContent = t('localReadOnly');
       byId('providerState').textContent = provider.title;
       byId('providerState').className = provider.tone;
-      byId('providerDetail').textContent = provider.detail;
+      // A retired market source priced baselines that are still on disk. They
+      // are not deleted and not re-labelled, but the source in use may no
+      // longer measure them - so that count rides along with the source line
+      // instead of disappearing into a table nobody re-reads.
+      const ruler = data.outcomeSummary && data.outcomeSummary.ruler;
+      byId('providerDetail').textContent = ruler && ruler.unreadable > 0
+        ? provider.detail + ' · ' + t('baselineUnreadable', { count: formatCount(ruler.unreadable) })
+        : provider.detail;
       byId('lastAttempt').textContent = formatClock(lastAttempt);
       byId('attemptAgo').textContent = relativeTime(lastAttempt, now);
       byId('lastSuccess').textContent = formatClock(lastSuccess);
@@ -2595,7 +2505,7 @@
     function renderNotice(data) {
       const notice = byId('notice');
       notice.hidden = ['RUNNING', 'SCANNING', 'DEGRADED'].includes(data.status);
-      if (['AUTH_REQUIRED', 'AVE_AUTH_REQUIRED'].includes(data.status)) {
+      if (data.status === 'AUTH_REQUIRED') {
         notice.className = 'notice';
         notice.textContent = t('authNotice');
       } else if (data.status === 'RATE_LIMITED') {
@@ -2646,18 +2556,18 @@
       const data = liveData && liveData.chain === chain ? liveData : null;
       const stale = !data || data.stale || !data.lastSuccessAt || Date.now() - data.lastSuccessAt > 60000;
       const updateFailed = liveRefreshErrorChain === chain;
-      const status = !liveEnabled ? 'livePaused' : lastData && !serviceOnline ? 'localOffline' : updateFailed ? 'liveRefreshFailed' : data && data.status === 'BUDGET_PAUSED' ? 'aveBudgetPaused'
-        : data && data.status === 'HOURLY_BUDGET_PAUSED' ? 'aveHourlyPaused' : data && data.status === 'TOTAL_BUDGET_PAUSED' ? 'aveTotalPaused'
-        : data && data.status === 'QUOTA_PAUSED' ? 'aveQuotaPaused' : data && data.status === 'RATE_LIMITED' ? 'aveApiRate'
-        : data && ['AUTH_REQUIRED', 'AVE_AUTH_REQUIRED'].includes(data.status) ? 'statusAuth' : data && data.status === 'ERROR' ? 'aveApiNetwork'
+      const status = !liveEnabled ? 'livePaused' : lastData && !serviceOnline ? 'localOffline' : updateFailed ? 'liveRefreshFailed' : data && data.status === 'BUDGET_PAUSED' ? 'budgetPaused'
+        : data && data.status === 'HOURLY_BUDGET_PAUSED' ? 'hourlyPaused' : data && data.status === 'TOTAL_BUDGET_PAUSED' ? 'totalPaused'
+        : data && data.status === 'QUOTA_PAUSED' ? 'quotaPaused' : data && data.status === 'RATE_LIMITED' ? 'apiRateLimited'
+        : data && data.status === 'AUTH_REQUIRED' ? 'statusAuth' : data && data.status === 'ERROR' ? 'apiNetworkError'
           : !data || data.status === 'LOADING' || data.status === 'WAITING' ? 'livePolling'
             : data.diagnostics && data.diagnostics.pending > 0 && !data.diagnostics.ready ? 'livePending' : stale ? 'liveStale' : 'liveReady';
       byId('liveAuto').checked = liveEnabled;
-      const market = lastData && lastData.aveMarket;
+      const market = lastData && lastData.market;
       const liveState = byId('liveState');
-      const marketBlockedUntil = Math.max(number(market?.nextAllowedAt), number(market?.budget?.blockedUntil));
+      const marketBlockedUntil = number(market?.nextAllowedAt);
       const rateLimitShownAbove = liveEnabled && serviceOnline && !updateFailed && (data?.status === 'RATE_LIMITED'
-        || market?.pauseCode === 'AVE_RATE_LIMITED' && marketBlockedUntil > Date.now());
+        || market?.pauseCode === 'SOURCE_COOLING' && marketBlockedUntil > Date.now());
       liveState.hidden = rateLimitShownAbove;
       liveState.textContent = rateLimitShownAbove ? '' : t(status);
       const observedRows = unifiedPoolRows(chain);
@@ -3326,8 +3236,6 @@
       byId('manualDetail').textContent = t('localMarkNoTrade');
       renderNotice(data);
       renderChainSwitcher(data);
-      renderAveMarket(data);
-      if (!aveBusy && data.aveConnection) renderAveConnection(data.aveConnection);
       renderManagement(data);
       renderScreening(data);
       renderTelemetry();
@@ -3382,96 +3290,7 @@
         : (existing && existing.decision === decision ? t('undoIgnoredToast') : t('ignoredToast')));
     }
 
-    function renderAveMarket(data) {
-      const market = data.aveMarket;
-      byId('aveBudget').textContent = market ? t('aveBudgetLine', { used: market.budget?.used ?? '—', limit: market.dailyLimit ?? '—',
-        remaining: market.budget?.totalRemaining ?? '—', total: market.totalLimit ?? '—',
-        hourUsed: market.budget?.hourUsed ?? '—', hourLimit: market.hourlyLimit ?? '—' }) : '';
-      byId('aveBudget').title = t('aveBudgetHint');
-      const transport = market?.transport;
-      byId('aveTransport').textContent = transport ? t('aveTransport', { seconds: transport.spacingMs / 1000, level: transport.strikes }) : t('notRead');
-      byId('aveDiagnosticRows').textContent = (transport?.recent || []).slice(-5).reverse().map(function (row) {
-        const reason = 'aveReason_' + row.category;
-        return formatClock(row.at) + ' · ' + row.chain + ' / ' + row.endpoint + ' · HTTP ' + (row.httpStatus || '—') + ' · ' + t(reason);
-      }).join('\n');
-    }
     let refreshSequence = 0, acceptedRefresh = 0;
-    let aveBusy = false, aveOperation = 0, aveFeedback = null;
-    const aveFeedbackKeys = { AVE_WAIT: 'aveTestWaiting', AVE_BUSY: 'aveTestWaiting', AVE_COOLDOWN: 'aveTestWaiting',
-        AVE_DISCOVERY_RESERVE: 'aveTestReserved', AVE_RATE_LIMIT: 'aveApiRate', AVE_RATE_LIMITED: 'aveApiRate',
-        AVE_HOURLY_BUDGET: 'aveHourlyPaused', AVE_TOTAL_BUDGET: 'aveTotalPaused', AVE_BUDGET: 'aveBudgetPaused', AVE_QUOTA: 'aveQuotaPaused',
-        AVE_AUTH: 'aveTestAuth', AVE_KEY: 'aveTestInput', AVE_INPUT: 'aveTestInput',
-        AVE_NETWORK: 'aveTestNetwork', AVE_TIMEOUT: 'aveTestTimeout', AVE_UPSTREAM: 'aveTestUpstream',
-        AVE_SCHEMA: 'aveTestResponse', AVE_SIZE: 'aveTestResponse', AVE_STORAGE: 'aveTestStorage', AVE_BUDGET_STORE: 'aveTestStorage',
-        AVE_ABORTED: 'aveTestCancelled', AVE_CHANGED: 'aveTestCancelled', AVE_DISABLED: 'aveTestCancelled',
-        AVE_CONNECT: 'aveTestUnknown', AVE_REQUEST: 'aveTestUnknown', AVE_RELOAD: 'aveTestUnknown' };
-    function safeAveFeedback(code, retryAt) {
-      return { code: Object.hasOwn(aveFeedbackKeys, code) ? code : 'AVE_CONNECT',
-        retryAt: Number.isSafeInteger(retryAt) && retryAt > Date.now() && retryAt <= Date.now() + 366 * 86400000 ? retryAt : 0 };
-    }
-    function aveFeedbackText(input) {
-      const feedback = safeAveFeedback(input.code, input.retryAt);
-      return t(aveFeedbackKeys[feedback.code]) + ' · ' + feedback.code
-        + (feedback.retryAt > Date.now() ? ' · ' + t('aveTestRetryAt', { time: formatClock(feedback.retryAt) }) : '');
-    }
-    function renderAveConnection(snapshot) {
-      const configKey = snapshot?.requiresReentry ? 'aveReentry' : snapshot?.configured ? 'aveKeySaved' : 'aveUnconfigured';
-      const label = byId('ave-config-status');
-      if (aveBusy) { label.dataset.i18n = 'aveChecking'; label.textContent = t('aveChecking'); }
-      else if (aveFeedback) { delete label.dataset.i18n; label.textContent = aveFeedbackText(aveFeedback); }
-      else { label.dataset.i18n = configKey; label.textContent = t(configKey); }
-      byId('aveSummary').textContent = ' · ' + t(configKey);
-      if (!snapshot?.configured) byId('aveSettings').open = true;
-      for (const kind of ['data']) {
-        const key = snapshot?.[kind]?.status === 'connected' ? 'aveChecked' : snapshot?.[kind]?.status === 'waiting' ? 'aveDeferred'
-          : snapshot?.[kind]?.status === 'error' ? 'aveFailed' : snapshot?.[kind]?.configured ? 'aveSaved' : 'aveUnconfigured';
-        byId('ave-' + kind + '-status').dataset.i18n = key;
-        byId('ave-' + kind + '-status').textContent = t(key);
-      }
-    }
-    async function refreshAve() {
-      if (aveBusy) return;
-      const operation = aveOperation;
-      try {
-        const response = await fetch('/api/ave-status', { cache: 'no-store', signal: AbortSignal.timeout(5000) });
-        if (response.ok) {
-          const result = await response.json();
-          if (!aveBusy && operation === aveOperation) renderAveConnection(result.ave);
-        }
-      } catch { /* Preserve the last status; never imply a connection succeeded. */ }
-    }
-    async function changeAve(action) {
-      if (aveBusy) return;
-      aveBusy = true; aveOperation++; aveFeedback = null;
-      document.querySelectorAll('.ave-settings button').forEach(button => { button.disabled = true; });
-      const label = byId('ave-config-status');
-      label.dataset.i18n = 'aveChecking'; label.textContent = t('aveChecking');
-      let snapshot;
-      try {
-        const body = {};
-        if (action === 'configure') body.key = byId('ave-api-key').value;
-        const response = await fetch('/api/ave-' + action, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(30000) });
-        const result = await response.json();
-        snapshot = result.ave;
-        if (snapshot) renderAveConnection(snapshot);
-        if (!response.ok) {
-          const failure = safeAveFeedback(result.error, result.retryAt);
-          throw Object.assign(new Error(failure.code), { retryAt: failure.retryAt });
-        }
-        byId('ave-api-key').value = '';
-        renderAveConnection(result.ave);
-        void refresh();
-      } catch (error) {
-        aveFeedback = safeAveFeedback(error.name === 'TimeoutError' ? 'AVE_TIMEOUT' : error.name === 'AbortError' ? 'AVE_ABORTED'
-          : error.message, error.retryAt);
-      } finally {
-        byId('ave-api-key').value = '';
-        aveBusy = false;
-        if (snapshot) renderAveConnection(snapshot);
-        else if (aveFeedback) { delete label.dataset.i18n; label.textContent = aveFeedbackText(aveFeedback); }
-        document.querySelectorAll('.ave-settings button').forEach(button => { button.disabled = false; });
-      }
-    }
     async function refresh() {
       const requestSequence = ++refreshSequence, requestChain = viewChain;
       try {
@@ -3592,9 +3411,6 @@
     });
     byId('filterSelect').addEventListener('change', renderCandidates);
     byId('sortSelect').addEventListener('change', renderCandidates);
-    byId('ave-key-form').addEventListener('submit', function (event) { event.preventDefault(); void changeAve('configure'); });
-    byId('ave-remove').addEventListener('click', function () { void changeAve('remove'); });
-    void refreshAve();
 
     byId('scanSelection').addEventListener('change', function () { selectedChainsDirty = true; });
     byId('saveChains').addEventListener('click', async function () {
@@ -3616,11 +3432,6 @@
       }
       writeStorage('memeRadarAlertsEnabledV1', alertsEnabled);
       if (lastData) renderManagement(lastData);
-    });
-    byId('disconnectButton').addEventListener('click', async function () {
-      if (!window.confirm(t('disconnectConfirm'))) return;
-      try { await changeAve('remove'); await refresh(); }
-      catch { showToast(t('settingsFailed')); }
     });
     byId('exportButton').addEventListener('click', async function () {
       try {

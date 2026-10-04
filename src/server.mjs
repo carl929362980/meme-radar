@@ -5,7 +5,6 @@ import path from 'node:path';
 import { secondaryChainSupport } from './secondary.mjs';
 import { tokenKey } from './local-store.mjs';
 import { CHART_RISK_VERSION, applyRiskExclusion } from './chart-risk.mjs';
-import { AveError } from './ave-settings.mjs';
 import { activeLiveLeads } from './live-leads.mjs';
 import { classifyTrack, EXIT_ALERT_MS, FLOW_KINDS, FLOW_ACTIVITIES, FLOW_STRENGTHS, rateTrack, TRACK_GRADES, worthWatching } from './tracking.mjs';
 import { VETO_STATES, VETO_CODES, VETO_LEVELS } from './veto.mjs';
@@ -59,7 +58,7 @@ function publicError(status) {
   if (status === 'BUDGET_PAUSED') return '本机每日预算已用完，下一预算日继续。';
   if (status === 'QUOTA_PAUSED') return 'AVE 返回配额不足，已暂停请求，不会自动购买。';
   if (status === 'RATE_LIMITED') return '行情接口请求受限，系统将等待冷却后复查。';
-  if (['AUTH_REQUIRED', 'AVE_AUTH_REQUIRED'].includes(status)) return 'AVE 行情凭证尚未配置或未通过验证。';
+  if (status === 'AUTH_REQUIRED') return '只读行情源未配置或未通过验证。';
   if (status === 'DEGRADED') return '本轮部分数据不完整，系统将自动复查。';
   if (status === 'ERROR' || status === 'STATE_ERROR') return '数据请求暂时失败，下一轮将自动重试。';
   return '';
@@ -220,8 +219,19 @@ function liveVoiceRows(liveDiscovery, state, scope, chain) {
 // Quote and pool clocks are market evidence, never a refreshed audit clock or
 // proof of token creation. Preserve unknowns rather than converting them to 0.
 function publicMarketEvidence(row = {}, now = Date.now()) {
-  if (row.marketProvider !== 'AVE') return {};
   const clock = value => typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+  // The GMGN routes carry no expiry clock and no pair identity: the reading is
+  // as old as the moment it was taken, and there is nothing to publish for the
+  // fields the routes do not answer. An absent expiry is not "never expires".
+  if (row.marketProvider === 'GMGN') {
+    const capturedAt = clock(row.capturedAt), sourceUpdatedAt = clock(row.sourceUpdatedAt);
+    const stale = capturedAt === null || sourceUpdatedAt === null || sourceUpdatedAt > capturedAt
+      || capturedAt > now || now - sourceUpdatedAt > 60_000;
+    return { marketProvider: 'GMGN', ageBasis: ['pool', 'trade', 'launch', 'token'].includes(row.ageBasis) ? row.ageBasis : 'unknown',
+      capturedAt, sourceUpdatedAt, expiresAt: null, stale, auditEligible: row.auditEligible === true && !stale,
+      volume5m: null, activityWindow: null, pairAddress: '', poolCreatedAt: null, firstTradeAt: null };
+  }
+  if (row.marketProvider !== 'AVE') return {};
   const capturedAt = clock(row.capturedAt), sourceUpdatedAt = clock(row.sourceUpdatedAt), expiresAt = clock(row.expiresAt);
   const stale = row.stale !== false || capturedAt === null || sourceUpdatedAt === null || expiresAt === null
     || capturedAt > now || sourceUpdatedAt > capturedAt || now - sourceUpdatedAt > 60_000 || now >= expiresAt;
@@ -237,7 +247,7 @@ function optionalMarketNumber(value) {
 function publicLiveSnapshot(source = {}, chain) {
   const statuses = ['WAITING', 'LOADING', 'READY', 'AUTH_REQUIRED', 'ERROR', 'BUDGET_PAUSED', 'HOURLY_BUDGET_PAUSED', 'TOTAL_BUDGET_PAUSED', 'QUOTA_PAUSED', 'RATE_LIMITED'];
   const codes = new Set(['READ_FAILED', ...AVE_PUBLIC_CODES]);
-  const output = { chain, marketProvider: source.marketProvider === 'AVE' ? 'AVE' : null,
+  const output = { chain, marketProvider: ['AVE', 'GMGN'].includes(source.marketProvider) ? source.marketProvider : null,
     status: statuses.includes(source.status) ? source.status : 'WAITING', code: codes.has(source.code) ? source.code : null,
     execution: false, stale: source.stale !== false,
     ...Object.fromEntries(['intervalMs', 'nextPollAt', 'lastAttemptAt', 'lastPollAt', 'lastSuccessAt', 'requestMs', 'pollCount', 'receivedCount', 'filteredCount']
@@ -777,19 +787,28 @@ function secondaryEndpointHealth(row = {}) {
   return { ok: status === 'OK', status, code: errorCode, message: messages[status] || '' };
 }
 
+const HEALTH_ROUTE_NAMES = new Set(['trenches', 'trending', 'tokenInfo', 'kline', 'smartmoney', 'kol', 'wallet']);
 function publicSourceHealth(source = {}) {
   const result = {};
   if (source.discovery && typeof source.discovery === 'object') {
-    const ave = source.discovery.provider === 'AVE';
+    const isAve = source.discovery.provider === 'AVE';
     result.discovery = {
-      ...(ave ? { provider: 'AVE' } : {}),
+      ...(isAve ? { provider: 'AVE' } : { provider: String(source.discovery.provider || '') === 'GMGN' ? 'GMGN' : null }),
+      // Per-route arrival counts and the routes that did not answer. A feed
+      // that lost one of its two routes still looks like a feed, so the loss
+      // is reported rather than left to look like a quiet market. Route names
+      // are allowlisted: a count is keyed by a string the source controls, and
+      // echoing it would publish whatever that string happened to be.
+      ...(source.discovery.counts ? { routes: Object.fromEntries(Object.keys(source.discovery.counts)
+        .filter(key => HEALTH_ROUTE_NAMES.has(key)).map(key => [key, nonnegative(source.discovery.counts[key])])) } : {}),
+      ...(Number.isFinite(source.discovery.failedRoutes) ? { failedRoutes: nonnegative(source.discovery.failedRoutes) } : {}),
       complete: source.discovery.complete === true,
       checkedAt: finite(source.discovery.checkedAt),
-      ...(!ave ? { trenches: endpointHealth(source.discovery.trenches) } : {}),
-      ...(!ave || source.discovery.trending ? { trending: endpointHealth(source.discovery.trending, ave ? 'AVE' : undefined) } : {}),
-      ...(ave && source.discovery.coverage ? { coverage: Object.fromEntries(['pages', 'inRange', 'maxPages']
+      ...(!isAve ? { trenches: endpointHealth(source.discovery.trenches) } : {}),
+      ...(!isAve || source.discovery.trending ? { trending: endpointHealth(source.discovery.trending, isAve ? 'AVE' : undefined) } : {}),
+      ...(isAve && source.discovery.coverage ? { coverage: Object.fromEntries(['pages', 'inRange', 'maxPages']
         .map(key => [key, nonnegative(source.discovery.coverage[key])])) } : {}),
-      ...(ave && source.discovery.enrichment ? { enrichment: {
+      ...(isAve && source.discovery.enrichment ? { enrichment: {
         attempted: nonnegative(source.discovery.enrichment.attempted), enriched: nonnegative(source.discovery.enrichment.enriched),
         deferred: nonnegative(source.discovery.enrichment.deferred), complete: source.discovery.enrichment.complete === true,
         pausedCode: AVE_PUBLIC_CODES.has(source.discovery.enrichment.pausedCode) ? source.discovery.enrichment.pausedCode : null,
@@ -813,20 +832,20 @@ function publicSourceHealth(source = {}) {
     };
   }
   if (source.lastAudit && typeof source.lastAudit === 'object') {
-    const ave = source.lastAudit.provider === 'AVE';
+    const isAve = source.lastAudit.provider === 'AVE';
     const endpoints = {};
     for (const name of ['info', 'security', 'pool', 'holders', 'traders', 'candles']) {
-      if (source.lastAudit.endpoints?.[name]) endpoints[name] = endpointHealth(source.lastAudit.endpoints[name], ave ? 'AVE' : undefined);
+      if (source.lastAudit.endpoints?.[name]) endpoints[name] = endpointHealth(source.lastAudit.endpoints[name], isAve ? 'AVE' : undefined);
     }
     result.lastAudit = {
-      ...(ave ? { provider: 'AVE', transportComplete: source.lastAudit.transportComplete === true,
+      ...(isAve ? { provider: 'AVE', transportComplete: source.lastAudit.transportComplete === true,
         marketComplete: source.lastAudit.marketComplete === true, evidenceComplete: source.lastAudit.evidenceComplete === true,
         marketFresh: source.lastAudit.marketFresh === true, capturedAt: optionalMarketNumber(source.lastAudit.capturedAt),
         missingEvidence: ['info', 'security', 'pool', 'holders', 'traders', 'candles'].filter(name => source.lastAudit.missingEvidence?.includes(name)),
         requestedEndpoints: ['info', 'security', 'pool', 'holders', 'traders', 'candles'].filter(name => source.lastAudit.requestedEndpoints?.includes(name)) } : {}),
       complete: source.lastAudit.complete === true,
       checkedAt: finite(source.lastAudit.checkedAt || source.lastAudit.auditedAt),
-      code: ave ? AVE_PUBLIC_CODES.has(source.lastAudit.code) ? source.lastAudit.code : '' : publicCode(source.lastAudit.code),
+      code: isAve ? AVE_PUBLIC_CODES.has(source.lastAudit.code) ? source.lastAudit.code : '' : publicCode(source.lastAudit.code),
       endpoints
     };
   }
@@ -878,6 +897,13 @@ function publicOutcomeSummary(source = {}) {
       priceRequests: finite(source.boardedFrame?.priceRequests)
     }
     ,baselines: Object.fromEntries(Object.entries(source.baselines || {}).map(([name, count]) => [text(name, 24) || 'UNKNOWN', finite(count)]))
+    // The retired ruler's baselines are kept on disk and counted, not deleted
+    // and not re-labelled. `ruler.unreadable` is the number this provider may
+    // no longer measure, so a retirement never reads as a quiet market.
+    ,ruler: source.ruler && typeof source.ruler === 'object' ? {
+      name: text(source.ruler.name, 24),
+      readable: finite(source.ruler.readable), unreadable: finite(source.ruler.unreadable), unknown: finite(source.ruler.unknown)
+    } : null
     ,coverage: Object.fromEntries(['passed', 'rejected'].map(cohort => [cohort,
       Object.fromEntries(['m5','m15','m30','h1','h2','h6','h24'].map(key => {
         const row = source.coverage?.[cohort]?.[key] || {};
@@ -1181,34 +1207,21 @@ function publicAveConnection(source = {}) {
     trade: { configured: false, status: 'disabled' }, executionReady: false,
     executionReason: '仅接入 AVE 行情；没有连接钱包、签名或下单能力' };
 }
-function publicAveMarket(source = {}, supportedChains = []) {
-  const publicChains = allowedChainIds(supportedChains);
-  const budget = source.budget;
-  return { provider: 'AVE', readonly: true, dailyLimit: nonnegative(source.dailyLimit), nextAllowedAt: nonnegative(source.nextAllowedAt),
-    totalLimit: nonnegative(source.totalLimit), hourlyLimit: nonnegative(source.hourlyLimit), manualResetRequired: source.manualResetRequired === true,
-    pauseCode: AVE_PUBLIC_CODES.has(source.pauseCode) ? source.pauseCode : null, pending: nonnegative(source.pending),
-    recovery: { active: source.recovery?.active === true, headOnly: source.recovery?.headOnly === true, auditAllowed: source.recovery?.auditAllowed !== false },
-    discoveryReserveCu: nonnegative(source.discoveryReserveCu), nonTrendingPausedUntil: nonnegative(source.nonTrendingPausedUntil),
-    transport: { spacingMs: nonnegative(source.transport?.spacingMs), strikes: nonnegative(source.transport?.strikes),
-      last429At: nonnegative(source.transport?.last429At), active: source.transport?.active === true,
-      recent: (Array.isArray(source.transport?.recent) ? source.transport.recent : []).slice(-20).map(row => ({
-        endpoint: ['trending', 'details', 'pair', 'klines'].includes(row?.endpoint) ? row.endpoint : 'unknown',
-        chain: publicChains.has(row?.chain) ? row.chain : '',
-        category: ['ok', 'rate', 'quota', 'gateway', 'unknown', 'timeout', 'cancelled', 'schema'].includes(row?.category) ? row.category : 'unknown',
-        ...Object.fromEntries(['at', 'httpStatus', 'durationMs', 'retryAt', 'retryAfterMs'].map(key => [key, nonnegative(row?.[key])])),
-        startGapMs: finiteOrNull(row?.startGapMs)
-      })) },
-    metrics: { ...Object.fromEntries(['requests', 'cacheHits', 'rateLimits', 'estimatedCu', 'discoveryCacheHits'].map(key => [key, nonnegative(source.metrics?.[key])])),
-      scope: 'session', byKind: Object.fromEntries(['trending', 'details', 'pair', 'klines'].map(kind => [kind,
-        Object.fromEntries(['requests', 'cacheHits', 'estimatedCu'].map(key => [key, nonnegative(source.metrics?.byKind?.[kind]?.[key])]))])) },
-    budget: budget && typeof budget === 'object' ? {
-      day: typeof budget.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(budget.day) ? budget.day : null,
-      ...Object.fromEntries(['used', 'remaining', 'nonTrendingRemaining', 'totalUsed', 'totalRemaining', 'hourUsed', 'hourRemaining', 'periodStartedAt', 'blockedUntil', 'quotaUntil', 'nextRequestAt'].map(key => [key, nonnegative(budget[key])])),
-      legacyUsageIncluded: budget.legacyUsageIncluded === true,
-      basis: 'local_estimated_cu' } : null,
-    chains: Object.fromEntries([...publicChains].filter(chain => source.chains?.[chain]).map(chain => [chain, {
-      apiChain: chain === 'sol' ? 'solana' : chain, documented: source.chains[chain].documented === true,
-      state: source.chains[chain].state === 'observed' ? 'observed' : 'unverified' }])) };
+// The one market source is GMGN. Its client never sleeps inside the request
+// lane, so the only wait it can impose is the shared bucket cooldown. AVE's CU
+// budget arithmetic is gone with AVE: this provider publishes no daily or
+// hourly quota, and a projection that printed one would be inventing numbers.
+const MARKET_PUBLIC_CODES = new Set(['SOURCE_COOLING', 'SOURCE_BANNED', 'SOURCE_AUTH', 'SOURCE_NO_KEY']);
+// The client stores whatever an upstream error happened to be called, so the
+// code is published only when it looks like a code. Anything else - a URL, a
+// header value, a message - is dropped rather than redacted in place.
+const marketErrorCode = value => typeof value === 'string' && /^[A-Z][A-Z0-9_]{1,31}$/.test(value) ? value : '';
+function publicMarketStatus(source = {}) {
+  return { provider: 'GMGN', readonly: true, enabled: source.enabled === true,
+    nextAllowedAt: nonnegative(source.nextAllowedAt),
+    pauseCode: MARKET_PUBLIC_CODES.has(source.pauseCode) ? source.pauseCode : null,
+    lastOkAt: nonnegative(source.lastOkAt), lastErrorCode: marketErrorCode(source.lastErrorCode),
+    ...Object.fromEntries(['requests', 'ok', 'failed', 'throttled', 'banned'].map(key => [key, nonnegative(source[key])])) };
 }
 function publicUpdate(source = {}) {
   const messages = { idle: '尚未检查更新', checking: '正在检查官方稳定版本', available: '发现更高的稳定版本，可确认更新',
@@ -1226,13 +1239,12 @@ function publicUpdate(source = {}) {
 }
 
 export function createServer({ state, settings, controls, switchChain,
-  liveDiscovery, signals, enqueueReview, ave, getAveConnection, getMarketStatus, getSchedulerStatus, updater, onUpdateReady, supportedChains = [] }) {
+  liveDiscovery, signals, enqueueReview, getMarketStatus, getSchedulerStatus, updater, onUpdateReady, supportedChains = [] }) {
   const publicChains = allowedChainIds(supportedChains);
   const dashboard = path.join(settings.publicDir, 'index.html');
   const dashboardHtml = fs.readFileSync(dashboard, 'utf8');
   const csp = contentSecurityPolicy(dashboardHtml);
   let handoffScheduled = false;
-  const aveSnapshot = () => publicAveConnection(readSnapshot(() => ave?.snapshot()));
   const updateSnapshot = () => publicUpdate(readSnapshot(() => updater?.snapshot()));
 
   const server = http.createServer(async (req, res) => {
@@ -1276,44 +1288,11 @@ export function createServer({ state, settings, controls, switchChain,
       }
     }
 
-    if (url.pathname === '/api/ave-status' && req.method === 'GET') return sendJson(res, ave ? 200 : 503, ave ? { ave: aveSnapshot() } : { error: 'ave_unavailable' }, csp);
-    if (req.method === 'POST' && ['/api/ave-configure', '/api/ave-remove'].includes(url.pathname)) {
-      if (!req.headers.origin) return sendJson(res, 403, { error: 'local_request_required' }, csp);
-      if (!ave) return sendJson(res, 503, { error: 'ave_unavailable' }, csp);
-      const controller = new AbortController();
-      const abort = () => controller.abort();
-      // IncomingMessage.close also fires after a fully uploaded normal POST.
-      // Cancel only an aborted upload or a disconnected unfinished response.
-      const responseClosed = () => { if (!res.writableEnded) abort(); };
-      const checkAuthority = () => {
-        if (controller.signal.aborted || req.aborted || res.destroyed)
-          throw new AveError('AVE_ABORTED', 'AVE 行情测试已取消', 409);
-      };
-      req.once('aborted', abort);
-      res.once('close', responseClosed);
-      try {
-        const body = await readSmallJson(req, 4096);
-        checkAuthority();
-        const result = url.pathname.endsWith('configure')
-          ? await ave.configure(body, checkAuthority, { signal: controller.signal }) : ave.remove(body);
-        checkAuthority();
-        return sendJson(res, 200, { ave: publicAveConnection(result) }, csp);
-      } catch (e) {
-        if (controller.signal.aborted || req.aborted || res.destroyed || res.writableEnded) return;
-        const code = AVE_PUBLIC_CODES.has(e?.code) ? e.code : 'AVE_STORAGE';
-        return sendJson(res, e instanceof AveError && [400, 409, 429, 502, 503, 504].includes(e.status) ? e.status
-          : [400, 413, 415].includes(e.statusCode) ? e.statusCode : 503,
-        { error: code, retryAt: AVE_PUBLIC_CODES.has(e?.code) ? publicAveRetryAt(e.retryAt) : null, ave: aveSnapshot() }, csp);
-      } finally {
-        req.removeListener('aborted', abort);
-        res.removeListener('close', responseClosed);
-      }
-    }
 
-    // The signal channel is deliberately a separate endpoint from the AVE live
+    // The signal channel is deliberately a separate endpoint from the discovery
     // snapshot: the two are different measurements of the same market and must
     // never be rendered as one list. A local origin is still required because
-    // this is a read of the user's own configured credentials' output.
+    // this is a read of the user's own machine.
     if (req.method === 'POST' && url.pathname === '/api/signals') {
       if (!req.headers.origin) return sendJson(res, 403, { error: 'local_request_required' }, csp);
       if (!signals) return sendJson(res, 503, { error: 'signals_unavailable' }, csp);
@@ -1453,9 +1432,9 @@ export function createServer({ state, settings, controls, switchChain,
           chain: text(value.chain, 32).toLowerCase(), address: text(value.address, 128), favorite: value.favorite === true,
           note: publicMessage(value.note, '[redacted]', 500), updatedAt: finite(value.updatedAt)
         }]));
-      const output = { ...toPublicStatus(selected), scanProvider: 'AVE',
-        aveConnection: publicAveConnection(readSnapshot(getAveConnection || (() => ave?.snapshot()))),
-        aveMarket: publicAveMarket(readSnapshot(getMarketStatus), supportedChains), annotations,
+      const output = { ...toPublicStatus(selected), scanProvider: 'GMGN',
+
+        market: publicMarketStatus(readSnapshot(getMarketStatus)), annotations,
         voiceSnapshot: voiceSnapshot(state.value, enabledChains, liveDiscovery),
         screening: publicScreening(selected.screening, settings),
         scheduler: { scanningChain: text(state.value.activeChain, 32), enabledChains,
@@ -1467,12 +1446,12 @@ export function createServer({ state, settings, controls, switchChain,
       };
       output.supportedChains = [...publicChains];
       output.events = (output.events || []).filter(event => !event.chain || publicChains.has(event.chain));
-      // The AVE key and backoff are shared by every chain; a selected chain's
-      // stored timer must not advertise an already elapsed retry time.
+      // The market key and its cooldown are shared by every chain; a selected
+      // chain's stored timer must not advertise an already elapsed retry time.
       const statusNow = Date.now();
-      if (output.aveMarket.pauseCode === 'AVE_RATE_LIMITED' && output.aveMarket.nextAllowedAt > statusNow) {
+      if (output.market.pauseCode === 'SOURCE_COOLING' && output.market.nextAllowedAt > statusNow) {
         output.status = 'RATE_LIMITED';
-        output.retryAt = output.aveMarket.nextAllowedAt;
+        output.retryAt = output.market.nextAllowedAt;
         output.nextCycleAt = Math.max(output.nextCycleAt || 0, output.retryAt);
       } else if (output.status === 'RATE_LIMITED' && (!output.retryAt || output.retryAt <= statusNow)) {
         // A chain can retain the status of its last failed turn while another
