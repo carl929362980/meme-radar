@@ -385,7 +385,13 @@ export class GmgnDiscovery {
         });
         state.counts.newPool++;
       } else {
-        existing.latest = { at, marketCap: row.marketCap, liquidity: row.liquidity, holders: row.holders, progress: row.progress };
+        // The price this record carries comes from the enrichment pass, not
+        // from this feed: rebuilding the reading from scratch here would wipe
+        // it every poll and the axis would be null at almost every fold. The
+        // kept price is at most one enrichment gap old, and the next fill
+        // replaces it.
+        existing.latest = { at, marketCap: row.marketCap, liquidity: row.liquidity, holders: row.holders, progress: row.progress,
+          price: existing.latest?.price ?? null };
         // Only the travel is recomputed. The anchor stays put.
         existing.curve = curveOf(existing.snapshot, existing.latest);
         existing.facts = mergeFacts(existing.facts, vetoFacts(row));

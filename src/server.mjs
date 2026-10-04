@@ -358,7 +358,12 @@ function publicSignalSnapshot(source = {}, chain) {
     ...Object.fromEntries(['intervalMs', 'tradeIntervalMs', 'lastAttemptAt', 'lastSuccessAt', 'pollCount', 'poolCount', 'tradeCount']
       .map(key => [key, finite(source[key])])),
     nextPollAt: finiteOrNull(source.nextPollAt),
-    counts: { newPool: finite(source.counts?.newPool), entry: finite(source.counts?.entry), exit: finite(source.counts?.exit) },
+    counts: { newPool: finite(source.counts?.newPool), entry: finite(source.counts?.entry), exit: finite(source.counts?.exit),
+      // The price fill's read count. A fill that reads nothing (or reads zeros
+      // for unindexed tokens) is otherwise invisible from outside - it took a
+      // live diagnosis to notice the axis stayed null, because this projection
+      // rebuilt `counts` with a fixed key set and silently dropped the counter.
+      priceReads: finite(source.counts?.priceReads) },
     pools, signals
   };
 }

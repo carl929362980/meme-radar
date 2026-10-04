@@ -627,6 +627,11 @@ test('the price fill gives a lead its price axis from the same provider, capped 
   h.advance(CHAIN_PLANS.sol.poolMs + 1_000);
   await h.tick();
   assert.equal(reads.length, 1, 'a pool inside the enrichment gap is not re-read');
+  // 🚨 Regression pin: the re-poll rebuilds the reading from the feed row,
+  // which answers no price - the rebuild must carry the enriched price
+  // forward, or the axis is null at almost every fold.
+  assert.equal(h.engine.snapshot('sol').pools.find((entry) => entry.address === poolRow().address).latest.price, 0.00042,
+    'a feed re-sighting keeps the price the fill wrote');
 
   // Past the gap the same pool is read again - a price axis that never moves
   // would read a stall as a market fact.
