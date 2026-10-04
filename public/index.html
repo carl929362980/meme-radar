@@ -1976,10 +1976,15 @@
         const firstSeenAt = number(row.firstSeenAt || row.newAt || row.sourceUpdatedAt);
         const retained = row.retainedSnapshot === true && row.displayEligible === true && row.evidenceStale === true
           && Number.isFinite(row.displayUntil) && row.displayUntil > now;
+        // An absent expiry clock is not an expired one. The market source in use
+        // publishes no expiry at all, so requiring `expiresAt > now` dropped
+        // every row the API returned: the radar answered 31 rows and the board
+        // drew none. Freshness is the reading's own age, tested just above.
+        const unexpired = row.expiresAt === null || row.expiresAt === undefined || row.expiresAt > now;
         const current = row.discoveryState === 'READY' && row.auditEligible === true && row.stale !== true
           && row.retainedSnapshot !== true && firstSeenAt > 0 && firstSeenAt <= now
           && row.sourceUpdatedAt > 0 && row.sourceUpdatedAt <= now && now - row.sourceUpdatedAt <= 60000
-          && row.expiresAt > now;
+          && unexpired;
         return !rejected.has(voiceSpotlightKey(row)) && !['HARD_REJECT', 'REJECTED'].includes(row.audit && row.audit.status)
           && (current || retained);
       }).map(function (row) {
@@ -1989,7 +1994,8 @@
           return [voiceSpotlightKey(retained), retained];
         }
         const expired = row.stale || !(row.sourceUpdatedAt > 0) || row.sourceUpdatedAt > now
-          || now - row.sourceUpdatedAt > 60000 || !(row.expiresAt > now);
+          || now - row.sourceUpdatedAt > 60000
+          || (row.expiresAt !== null && row.expiresAt !== undefined && !(row.expiresAt > now));
         const item = { ...row, voiceSource: 'live', stale: expired, auditEligible: row.auditEligible && !expired,
           discoveryState: row.discoveryState === 'READY' && expired ? 'STALE' : row.discoveryState };
         return [voiceSpotlightKey(item), item];

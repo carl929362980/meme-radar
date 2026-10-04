@@ -64,6 +64,32 @@ test('an old-chain response or timeout cannot overwrite the newly selected chain
   }
 });
 
+// The radar's rows reach the board through unifiedPoolRows. The market source
+// in use publishes no expiry clock at all - `expiresAt` is null on every row -
+// so a freshness test written as `expiresAt > now` dropped all of them: the API
+// answered 31 rows and the board drew one. An absent expiry is not an expired
+// one; the reading's own age is what is left to test.
+test('缺失到期时间的行情行仍然进入看板，缺失不是过期', () => {
+  const start = html.indexOf('function unifiedPoolRows('), end = html.indexOf('function renderTrack(', start);
+  assert.ok(start >= 0 && end > start);
+  const at = Date.now();
+  const row = (index, over = {}) => ({ chain: 'bsc', address: '0x' + String(index + 1).padStart(40, 'a'), symbol: 'T' + index,
+    marketProvider: 'GMGN', discoveryState: 'READY', auditEligible: true, stale: false,
+    firstSeenAt: at - 5_000, sourceUpdatedAt: at - 5_000, expiresAt: null, ...over });
+  const context = { Date, Math, Number, Object, Array, String, JSON, Infinity,
+    byId: () => ({ innerHTML: '', textContent: '', hidden: false, className: '', checked: false, dataset: {}, value: '' }),
+    number: value => Number(value) || 0, t: key => key, rowsCache: [], viewChain: 'bsc',
+    activeChain: data => data && data.activeChain, backendDisposition: () => '', addressIdentity: value => String(value),
+    voiceSpotlightRank: () => Infinity, voiceSpotlightSnapshot: null,
+    liveData: { chain: 'bsc', rows: [row(1), row(2), { ...row(3), expiresAt: at - 1000 }, { ...row(4), sourceUpdatedAt: at - 120_000 }] } };
+  vm.runInNewContext(html.slice(start, end) + ';this.unified=unifiedPoolRows;', context);
+  const kept = context.unified('bsc').map(item => item.address);
+  assert.equal(kept.length, 2, 'two fresh rows with no expiry clock are still on the board');
+  assert.ok(kept.includes(context.liveData.rows[0].address) && kept.includes(context.liveData.rows[1].address));
+  assert.equal(kept.includes(context.liveData.rows[2].address), false, 'a real past expiry still expires');
+  assert.equal(kept.includes(context.liveData.rows[3].address), false, 'a reading older than a minute is still stale');
+});
+
 test('performance and event panels are removed together with their render hooks; scan status and voice remain', () => {
   assert.doesNotMatch(html, /data-i18n="(?:outcomeTitle|eventsTitle)"/);
   assert.doesNotMatch(html, /id="(?:outcome[^\"]*|events|cycle|requestSummary|eventHistory[^\"]*)"/);
