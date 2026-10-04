@@ -56,6 +56,18 @@ export const CHAIN_PLANS = Object.freeze({
 const MAX_SIGNALS = 200;
 const MAX_TRADES = 6_000;
 const TICK_MS = 5_000;
+// The trenches feed answers no price at all - measured across 1279 live rows -
+// so a lead's price axis would stay dead forever and the two quadrant branches
+// that read a price multiple would never fire for a feed lead. The token-info
+// route (weight 1) fills that hole from the same provider, and its liquidity
+// matched the trenches row for the same pool to within 0.98-1.00, which is the
+// cross-check that makes one record legal (two sources on one ruler would
+// publish the gap between them as a move). Affordability is a cadence, not a
+// hope: a handful of reads per pool poll, newest leads first, never re-reading
+// a pool more often than the gap below. At the 90-120 s pool cadence that is
+// roughly three reads a minute - a rounding error against the 20/s bucket.
+export const PRICE_ENRICH_PER_POLL = 6;
+export const PRICE_ENRICH_GAP_MS = 4 * 60_000;
 // A cluster may only re-announce itself when it has actually grown, or when this
 // much time has passed. Without the second clause a cluster that stays at three
 // wallets would fall silent, which is how a real accumulation gets missed.
@@ -240,7 +252,7 @@ export class GmgnDiscovery {
         status: 'WAITING', code: null, lastSuccessAt: 0, lastAttemptAt: 0,
         pollCount: 0, nextPoolAt: 0, nextTradeAt: 0,
         announced: new Map(),
-        counts: { newPool: 0, entry: 0, exit: 0 }
+        counts: { newPool: 0, entry: 0, exit: 0, priceReads: 0 }
       };
       this.states.set(chain, state);
     }
@@ -308,6 +320,9 @@ export class GmgnDiscovery {
       if (at >= state.nextPoolAt) {
         state.nextPoolAt = at + plan.poolMs;
         progressed = (await this.#pollPools(chain, plan)) || progressed;
+        // Priced after the pool poll so a lead first sighted this round can get
+        // its price axis on the very next fold rather than a cycle later.
+        await this.#enrichPrices(chain, state);
       }
       if (progressed) { state.lastSuccessAt = this.now(); state.status = 'READY'; state.code = null; }
       else if (state.status === 'WAITING') state.status = 'READY';
@@ -379,6 +394,33 @@ export class GmgnDiscovery {
       }
     }
     return true;
+  }
+
+  // A price read that failed must neither erase an earlier price nor pretend a
+  // price arrived, so a null response is skipped and only the attempt is
+  // stamped. The prioritisation is the product's own: a lead the pre-flight
+  // verdict has turned away gets no budget, and among the rest the newest lead
+  // wins - the pool in its first minutes is the one this tool exists to see.
+  async #enrichPrices(chain, state) {
+    if (!this.enabled || typeof this.client?.tokenInfo !== 'function') return;
+    const at = this.now();
+    const candidates = [...state.pools.values()]
+      .filter((pool) => (pool.veto?.state ?? null) !== 'BLOCK')
+      .filter((pool) => !Number.isFinite(pool.priceAt) || at - pool.priceAt >= PRICE_ENRICH_GAP_MS)
+      .sort((a, b) => b.firstSeenAt - a.firstSeenAt)
+      .slice(0, PRICE_ENRICH_PER_POLL);
+    for (const pool of candidates) {
+      pool.priceAt = at;
+      const info = await this.client.tokenInfo(chain, pool.address);
+      if (!info || info.price === null) continue;
+      // Only the price (and the holder count that rode along) is written. The
+      // feed's own market_cap and liquidity readings stay the record's rulers;
+      // replacing them with a second route's derivations would open the
+      // mixed-ruler door this file was written to keep shut.
+      pool.latest = { ...pool.latest, price: info.price,
+        holders: info.holders ?? pool.latest.holders };
+      state.counts.priceReads++;
+    }
   }
 
   async #pollTrades(chain, plan) {
@@ -496,10 +538,12 @@ export class GmgnDiscovery {
         // The newest reading advances the record; the frozen first sighting is
         // handed over as the anchor so a card's baseline is the moment the feed
         // first saw the pool, not the moment a scan cycle happened to pick it up.
+        // `price` rides the same reading the enrichment wrote; a sparse axis is
+        // the fold's problem, and it already knows how to claim a baseline late.
         firstSeenAt: pool.firstSeenAt,
-        baseline: { marketCap: pool.snapshot.marketCap, liquidity: pool.snapshot.liquidity,
-          holders: pool.snapshot.holders, at: pool.firstSeenAt },
-        marketCap: pool.latest.marketCap, liquidity: pool.latest.liquidity,
+        baseline: { price: pool.snapshot.price, marketCap: pool.snapshot.marketCap,
+          liquidity: pool.snapshot.liquidity, holders: pool.snapshot.holders, at: pool.firstSeenAt },
+        price: pool.latest.price, marketCap: pool.latest.marketCap, liquidity: pool.latest.liquidity,
         holders: pool.latest.holders, at: pool.latest.at,
         veto: pool.veto, firstVeto: pool.firstVeto, curve: pool.curve
       })),
@@ -530,6 +574,7 @@ export class GmgnDiscovery {
       poolCount: state.pools.size,
       tradeCount: state.trades.length,
       counts: { ...state.counts },
+      priceReads: state.counts.priceReads || 0,
       stale: !state.lastSuccessAt || at - state.lastSuccessAt > 5 * 60_000,
       // The anchors, newest sighting first. Both readings are exposed because
       // the pair is the point: a card that could only show the current value

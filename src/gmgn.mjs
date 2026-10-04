@@ -40,6 +40,11 @@ export const GMGN_ROUTES = Object.freeze({
   trenches: Object.freeze({ method: 'POST', path: '/v1/trenches', weight: 3 }),
   trending: Object.freeze({ method: 'GET', path: '/v1/market/rank', weight: 1 }),
   signal: Object.freeze({ method: 'POST', path: '/v1/market/token_signal', weight: 3 }),
+  // Measured (gmgn-surface-probe, 2026-10-04): 4/4 tracked feed rows returned a
+  // live price, ~230ms, and the liquidity it reports matched the trenches row
+  // for the same pool to within 0.98-1.00 - the same ruler, so the two readings
+  // may share a record. Weight 1, which makes a per-pool price fill affordable.
+  tokenInfo: Object.freeze({ method: 'GET', path: '/v1/token/info', weight: 1 }),
   // The highest-value alpha this provider exposes, and the cheapest: the
   // trenches feed is a firehose where >99% of rows are junk, while these two
   // return what wallets with a *measured* track record are trading right now.
@@ -267,6 +272,28 @@ export function normalizeTrenchesRow(row, chain, at) {
     website: text(row.website, 200),
     telegram: text(row.telegram, 120),
     observedAt: at
+  };
+}
+
+// One token-info payload -> the market readings this project folds into a
+// tracked record. Measured field names on the live route: the price lives at
+// `price.price` as a string (the siblings price_1m..price_24h are the window
+// opens), liquidity is a string, holder_count a number - so every numeric is
+// coerced once here rather than trusted at the call site. The market cap is
+// deliberately NOT recomputed here from price x supply: the trenches row the
+// record already carries has its own market_cap reading, and two derivations
+// of one number is exactly how a mixed ruler gets in.
+export function normalizeTokenInfo(data) {
+  if (!data || typeof data !== 'object') return null;
+  const price = num(data.price?.price);
+  return {
+    provider: 'GMGN',
+    price: price !== null && price > 0 ? price : null,
+    liquidity: num(data.liquidity),
+    holders: num(data.holder_count),
+    volume1h: num(data.price?.volume_1h),
+    smartWallets: num(data.wallet_tags_stat?.smart_wallets),
+    renownedWallets: num(data.wallet_tags_stat?.renowned_wallets)
   };
 }
 
@@ -587,6 +614,16 @@ export class GmgnClient {
     const unique = new Map();
     for (const row of rows) if (!unique.has(row.address)) unique.set(row.address, row);
     return [...unique.values()];
+  }
+
+  // One token's current market reading. The discovery feed (trenches) carries
+  // no price at all - measured across 1279 live rows - so this is the route
+  // that gives a tracked lead its price axis, from the same provider the lead
+  // came from rather than a second source with its own ruler.
+  async tokenInfo(chain, address) {
+    const data = await this.request('tokenInfo', { query: { chain, address } });
+    if (!data || typeof data !== 'object') return null;
+    return normalizeTokenInfo(data);
   }
 
   // Real-time trades from wallets GMGN has tagged smart money or KOL. `side` is

@@ -597,3 +597,61 @@ test('a pool the feed has stopped seeing is dropped instead of accumulating fore
     'the pool whose trades the buffer has forgotten is gone, and only the live one is left');
   assert.equal(h.engine.snapshot('sol').poolCount, 1);
 });
+
+test('the price fill gives a lead its price axis from the same provider, capped and never inside the gap', async () => {
+  // The trenches feed answers no price - measured across 1279 live rows - so
+  // without this fill a feed lead's price axis is dead forever. The fill is a
+  // cadence, not a hope: a cap per poll, a gap between re-reads, and a failed
+  // read that leaves the last real price in place.
+  const reads = [];
+  const { client } = fakeClient({ pools: [] });
+  client.trenches = async () => [poolRow()];
+  client.tokenInfo = async (chain, address) => {
+    reads.push(`${chain}:${address}`);
+    return { provider: 'GMGN', price: 0.00042, liquidity: 9_000, holders: 44,
+      volume1h: 120, smartWallets: 1, renownedWallets: 0 };
+  };
+  const h = harness({ client });
+  h.engine.start();
+  await h.tick();
+
+  const priced = h.engine.snapshot('sol').pools.find((entry) => entry.address === poolRow().address);
+  assert.equal(priced.latest.price, 0.00042, 'the fill writes the price it read');
+  assert.equal(h.engine.snapshot('sol').priceReads, 1);
+  const board = h.engine.observations('sol').pools[0];
+  assert.equal(board.price, 0.00042, 'the board read carries the price');
+  assert.equal(board.baseline.price ?? null, null, 'the frozen anchor keeps the feed\'s own (missing) price');
+
+  // Within the gap a re-poll must not spend a read, even though the pool poll
+  // itself ran again.
+  h.advance(CHAIN_PLANS.sol.poolMs + 1_000);
+  await h.tick();
+  assert.equal(reads.length, 1, 'a pool inside the enrichment gap is not re-read');
+
+  // Past the gap the same pool is read again - a price axis that never moves
+  // would read a stall as a market fact.
+  h.advance(5 * 60_000);
+  await h.tick();
+  assert.equal(reads.length, 2, 'past the gap the price is read again');
+});
+
+test('the price fill is capped per poll, skips nothing honest, and survives a failed read', async () => {
+  // More candidates than the cap: only the newest leads get budget this round.
+  const addresses = Array.from({ length: 8 }, (_, i) => `Pool${i}111111111111111111111111111111111111`);
+  const { client } = fakeClient({ pools: [] });
+  client.trenches = async () => addresses.map((address, i) => poolRow({ address, symbol: `P${i}` }));
+  const reads = [];
+  client.tokenInfo = async (chain, address) => { reads.push(address); return { provider: 'GMGN', price: 0.001, liquidity: 1, holders: 1, volume1h: 1, smartWallets: 0, renownedWallets: 0 }; };
+  const h = harness({ client });
+  h.engine.start();
+  await h.tick();
+  assert.ok(reads.length <= 6, `expected the per-poll cap to hold, saw ${reads.length}`);
+
+  // A failed read is skipped, not fatal, and does not erase anything.
+  client.tokenInfo = async () => null;
+  h.advance(5 * 60_000);
+  await h.tick();
+  const after = h.engine.snapshot('sol');
+  assert.ok(after.poolCount >= 6, 'the pools are still there');
+  assert.ok(after.pools.every((pool) => pool.latest.marketCap !== undefined), 'a failed fill touched nothing');
+});

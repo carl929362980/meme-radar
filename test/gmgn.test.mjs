@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import {
   GmgnClient, buildTrenchesBody, loadApiKey, normalizeTrenchesRow, unwrap, gmgnBareAddress,
   gmgnDuration, TRENCHES_PLATFORMS, TRENCHES_QUOTE_ADDRESS_TYPES,
-  normalizeTrackRow, clusterTrades, CLUSTER_WINDOW_MS
+  normalizeTrackRow, clusterTrades, CLUSTER_WINDOW_MS, normalizeTokenInfo, GMGN_ROUTES
 } from '../src/gmgn.mjs';
 
 function jsonResponse(body, status = 200, headers = {}) {
@@ -504,3 +504,26 @@ test('a future timestamp cannot be counted as a live cluster', () => {
   assert.deepEqual(clusterTrades(rows, { now }), []);
 });
 
+
+test('the token-info route exists at weight 1 and normalizes the measured payload shape', () => {
+  // Measured on the live route (gmgn-surface-probe, 2026-10-04): price arrives
+  // as a string nested under `price.price`, liquidity as a string, holder_count
+  // as a number. A shape pinned here cannot rot silently into undefined reads.
+  assert.equal(GMGN_ROUTES.tokenInfo.weight, 1);
+  assert.equal(GMGN_ROUTES.tokenInfo.path, '/v1/token/info');
+  const info = normalizeTokenInfo({
+    price: { price: '0.0000042312743', price_1m: '0.0000042312743', volume_1h: '46.55' },
+    liquidity: '7205.72821125396',
+    holder_count: 3,
+    wallet_tags_stat: { smart_wallets: 2, renowned_wallets: 0 }
+  });
+  assert.deepEqual(info, { provider: 'GMGN', price: 0.0000042312743, liquidity: 7205.72821125396,
+    holders: 3, volume1h: 46.55, smartWallets: 2, renownedWallets: 0 });
+  // A zero price is not a price: it must read as absent rather than as a
+  // collapse to zero, because "worthless" and "unanswered" are different facts.
+  const zero = normalizeTokenInfo({ price: { price: '0' }, liquidity: '100', holder_count: 1 });
+  assert.equal(zero.price, null);
+  assert.equal(normalizeTokenInfo(null), null);
+  // A shell payload must normalize without throwing and answer null, not undefined.
+  assert.equal(normalizeTokenInfo({}).price, null);
+});
