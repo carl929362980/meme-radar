@@ -68,7 +68,10 @@ test('performance and event panels are removed together with their render hooks;
   assert.doesNotMatch(html, /data-i18n="(?:outcomeTitle|eventsTitle)"/);
   assert.doesNotMatch(html, /id="(?:outcome[^\"]*|events|cycle|requestSummary|eventHistory[^\"]*)"/);
   assert.doesNotMatch(html, /\b(?:eventOverview|renderEvents|renderOutcomes)\s*\(/);
-  assert.match(html, /id="livePanel"/);
+  // The candidate radar is not a panel of its own any more: its rows are handed
+  // to the board's renderer, so the page carries exactly one board section.
+  assert.match(html, /id="trackPanel"/);
+  assert.doesNotMatch(html, /id="livePanel"/);
   assert.match(html, /id="voiceEnable"/);
   assert.match(html, /id="providerState"/);
   assert.match(html, /renderTelemetry\(\)/);
@@ -270,7 +273,9 @@ test('自动筛选替代人工通过，保留历史标记兼容且不下单', ()
   assert.doesNotMatch(html, /data-action="ignore"/);
   assert.match(html, /id="advancedPanel"[^>]*>/);
   assert.doesNotMatch(html, /id="advancedPanel"[^>]*\bopen\b/);
-  assert.match(html, /value="new" selected/);
+  // The radar's "newest first" select went with the radar panel; the one board
+  // sorts by the engine's grade by default.
+  assert.match(html, /value="grade" selected/);
   assert.match(html, /class="compact-audits"/);
   assert.match(html, /复制合约/);
   assert.match(html, /官网无/);
@@ -451,17 +456,6 @@ test('筛选原因默认折叠，缺失统计不伪造零，行情初筛不标�
   assert.doesNotMatch(html, /<details id="screeningDetails"[^>]*\bopen\b/);
   assert.match(html, /liveEligible: \['初筛 · 未核验'/);
   assert.match(html, /\['AUTH_REQUIRED', 'AVE_AUTH_REQUIRED'\]\.includes\(data\.status\)/);
-});
-
-test('候选空池区分过期行情和当前筛选失败，不能把缓存过期误写成风险排除', () => {
-  const start = html.indexOf('function liveEmptyMessage('), end = html.indexOf('function renderLive(', start);
-  const context = { t: value => value };
-  vm.runInNewContext(html.slice(start, end) + ';this.show=liveEmptyMessage;', context);
-  const source = { lastSuccessAt: 1234, receivedCount: 100, diagnostics: { outsideRange: 0 } };
-  assert.equal(context.show(source, '', true, 'liveReady'), 'liveStale');
-  assert.equal(context.show(source, '', false, 'liveReady'), 'liveExcluded');
-  assert.equal(context.show(source, 'query', true, 'liveReady'), 'liveFilteredEmpty');
-  assert.equal(context.show(null, '', true, 'aveApiNetwork'), 'aveApiNetwork');
 });
 
 test('页面不再公开展示严格筛选规则', () => {

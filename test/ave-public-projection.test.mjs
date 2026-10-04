@@ -58,135 +58,139 @@ test('AVE live endpoint allowlists fields, keeps quote expiry and supplies the a
   assert.equal(snapshot.rows[1].stale, false, 'projection must not mutate retained data');
   assert.doesNotMatch(JSON.stringify(response), /raw-private-fixture|"raw"/);
   const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-  const elements = Object.fromEntries(['liveAuto', 'liveState', 'liveSearch', 'liveSort', 'liveMeta', 'liveRows']
+  const elements = Object.fromEntries(['liveAuto', 'liveState', 'trackSort', 'trackMeta', 'trackState', 'trackRows']
     .map(id => [id, { value: '', textContent: '', innerHTML: '', hidden: false }]));
   const context = { Date: class extends Date { static now() { return now; } }, viewChain: 'bsc', liveData: response.body,
     lastData: { scheduler: { enabledChains: ['bsc'] } }, liveEnabled: true, serviceOnline: true,
-    liveRefreshErrorChain: '', liveFingerprint: '', liveQueued: new Map(),
+    liveRefreshErrorChain: '', signalData: null, trackFingerprint: '', radarRows: [], radarCulled: 0,
     rowsCache: [], backendDisposition: () => 'waiting',
     currentLocale: 'en', byId: id => elements[id], activeChain: () => 'bsc', t: key => key,
     number: (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback,
+    addressIdentity: value => String(value || '').toLowerCase(),
+    hasFiniteValue: value => value !== null && value !== undefined && Number.isFinite(Number(value)),
+    formatClock: String, formatDuration: String,
     chainCatalog: [{ id: 'bsc' }], chainLabel: () => 'BSC', relativeTime: String, escapeHtml: String,
     formatMoney: value => value === null ? 'UNKNOWN' : String(value), formatCount: value => value === null ? 'UNKNOWN' : String(value),
-    formatSignedPercent: String, formatDuration: String, radarLinks: () => '',
-    voiceSpotlightRank: () => Infinity, voiceSpotlightKey: r => r.chain + ':' + r.address,
+    formatSignedPercent: String, radarLinks: () => '',
+    encodeURIComponent, voiceSpotlightRank: () => Infinity, voiceSpotlightKey: r => r.chain + ':' + r.address,
     voiceSpotlight: null, voiceSpotlightSelected: '', voiceSpotlightSignature: '', voiceSpotlightSnapshot: null };
   const poolStart = html.indexOf('function unifiedPoolRows('), poolEnd = html.indexOf('// Voice spotlight:', poolStart);
-  const start = html.indexOf('function liveEmptyMessage('), end = html.indexOf('async function refreshLive()', start);
+  const start = html.indexOf('function renderLive()'), end = html.indexOf('async function refreshLive()', start);
+  // renderLive hands its rows to renderTrack, so the board's own tables and
+  // grade helpers - sliced, never copied, for the same reason the harness does
+  // it - come along with the draw. The constants are injected exactly once into
+  // a single reused context: a top-level const re-run in the same context throws
+  // "already been declared", which is why the draw itself sticks to functions.
+  const constants = html.slice(html.indexOf('const TRACK_TAG = {'), html.indexOf('let selectedChainsDirty'));
   const draw = html.slice(poolStart, poolEnd) + html.slice(start, end) + ';renderLive();';
-  vm.runInNewContext(draw, context);
+  vm.createContext(context);
+  vm.runInContext(constants, context);
+  vm.runInContext(draw, context);
   assert.equal(elements.liveState.textContent, 'liveReady'); assert.equal(elements.liveState.hidden, false);
   context.liveRefreshErrorChain = 'bsc';
-  vm.runInNewContext(draw, context);
+  vm.runInContext(draw, context);
   assert.equal(elements.liveState.textContent, 'liveRefreshFailed', 'a feed error is not a local-service outage');
-  assert.match(elements.liveRows.innerHTML, /MOCK/, 'keep valid candidates during a transient feed failure');
+  assert.match(elements.trackRows.innerHTML, /MOCK/, 'keep valid candidates during a transient feed failure');
   context.serviceOnline = false;
-  vm.runInNewContext(draw, context);
+  vm.runInContext(draw, context);
   assert.equal(elements.liveState.textContent, 'localOffline', 'status connection failure still reports offline');
   context.serviceOnline = true; context.liveRefreshErrorChain = 'robinhood';
-  vm.runInNewContext(draw, context);
+  vm.runInContext(draw, context);
   assert.equal(elements.liveState.textContent, 'liveReady', 'another chain failure cannot mark this chain offline');
   context.liveRefreshErrorChain = '';
   context.lastData = { status: 'RUNNING', scheduler: { enabledChains: ['bsc'] },
     aveMarket: { pauseCode: null, nextAllowedAt: 0, recovery: { active: true } } };
-  vm.runInNewContext(draw, context);
+  vm.runInContext(draw, context);
   assert.equal(elements.liveState.textContent, 'liveReady', 'successful recovery must not replace the candidate state');
   assert.equal(elements.liveState.hidden, false);
   context.lastData.aveMarket = { pauseCode: 'AVE_RATE_LIMITED', nextAllowedAt: 0,
     budget: { blockedUntil: now + 60000 }, recovery: { active: true } };
-  vm.runInNewContext(draw, context);
+  vm.runInContext(draw, context);
   assert.equal(elements.liveState.textContent, '', 'the top status owns an active rate-limit notice');
   assert.equal(elements.liveState.hidden, true);
   context.lastData.aveMarket = { pauseCode: null, nextAllowedAt: 0, recovery: { active: false } };
   context.liveData = { ...response.body, status: 'AUTH_REQUIRED' };
-  vm.runInNewContext(draw, context);
+  vm.runInContext(draw, context);
   assert.equal(elements.liveState.textContent, 'statusAuth', 'unrelated candidate states remain visible');
   assert.equal(elements.liveState.hidden, false);
   context.liveData = response.body;
-  assert.match(elements.liveRows.innerHTML, /1234/); assert.match(elements.liveRows.innerHTML, /poolAge/);
-  assert.doesNotMatch(elements.liveRows.innerHTML, /ageLabel|data-live-audit/);
-  assert.doesNotMatch(elements.liveRows.innerHTML, /liveStale/);
+  assert.match(elements.trackRows.innerHTML, /1234/); assert.match(elements.trackRows.innerHTML, /poolAge/);
+  assert.doesNotMatch(elements.trackRows.innerHTML, /ageLabel|data-live-audit/);
+  assert.doesNotMatch(elements.trackRows.innerHTML, /liveStale/);
   context.liveData = { ...response.body, rows: [row(now, { ageBasis: 'launch', pairAddress: '' })] };
-  vm.runInNewContext(draw, context);
-  assert.match(elements.liveRows.innerHTML, /launchAge/); assert.doesNotMatch(elements.liveRows.innerHTML, /poolAge/);
+  vm.runInContext(draw, context);
+  assert.match(elements.trackRows.innerHTML, /launchAge/); assert.doesNotMatch(elements.trackRows.innerHTML, /poolAge/);
   context.liveData = response.body;
-  elements.liveSort.value = 'new';
-  vm.runInNewContext(draw, context);
-  assert.match(elements.liveRows.innerHTML, /MOCK/); assert.doesNotMatch(elements.liveRows.innerHTML, /liveFilteredEmpty/);
-  elements.liveSearch.value = 'no-match';
-  vm.runInNewContext(draw, context);
-  assert.match(elements.liveRows.innerHTML, /liveFilteredEmpty/); assert.match(elements.liveRows.innerHTML, /data-live-reset/);
-  elements.liveSearch.value = '';
-  elements.liveSort.value = 'priority';
+  vm.runInContext(draw, context);
+  assert.match(elements.trackRows.innerHTML, /MOCK/);
+  // The radar feeds the board's own grid now, so the coverage diagnostics that
+  // once lived on a second panel are gone with it; what a stale pool feed looks
+  // like is answered by the state tag above the one grid.
   context.liveData = { ...response.body, receivedCount: 50,
     rows: [row(now, { auditEligible: false, discoveryState: 'PENDING', liquidity: null, volume5m: null, stale: true })],
     diagnostics: { received: 50, inRange: 1, pending: 1, stale: 0, ready: 0, excluded: 49, outsideRange: 49 } };
-  context.t = (key, args) => key === 'liveCoverage' ? JSON.stringify(args) : key;
-  vm.runInNewContext(draw, context);
-  assert.match(elements.liveMeta.title, /"received":50/);
-  assert.doesNotMatch(elements.liveRows.innerHTML, /livePending|liveFetching/);
-  assert.doesNotMatch(elements.liveRows.innerHTML, /UNKNOWN/);
-  assert.doesNotMatch(elements.liveRows.innerHTML, /data-live-audit/);
+  vm.runInContext(draw, context);
+  assert.doesNotMatch(elements.trackRows.innerHTML, /livePending|liveFetching/);
+  assert.doesNotMatch(elements.trackRows.innerHTML, /UNKNOWN/);
+  assert.doesNotMatch(elements.trackRows.innerHTML, /data-live-audit/);
   // The server projection removes expired rows; model that public response
   // rather than injecting an internally inconsistent READY-but-expired row.
   context.liveData.rows = [row(now, { discoveryState: 'READY', expiresAt: now - 1, stale: true, auditEligible: false })];
-  vm.runInNewContext(draw, context);
-  assert.doesNotMatch(elements.liveRows.innerHTML, /MOCK|liveStale|data-live-audit/);
+  vm.runInContext(draw, context);
+  assert.doesNotMatch(elements.trackRows.innerHTML, /MOCK|liveStale|data-live-audit/);
   // A sanitized receipt from the last genuinely passing scan remains visible,
   // but its old evidence never regains audit eligibility or a fresh badge.
   context.liveData.rows = [row(now, { retainedSnapshot: true, displayEligible: true, evidenceStale: true,
     discoveryState: 'RETAINED', expiresAt: now - 1, stale: true, auditEligible: false,
     displayUntil: now + 60000,
     firstSeenAt: now - 20 * 60_000, newAt: now - 20 * 60_000 })];
-  vm.runInNewContext(draw, context);
-  assert.match(elements.liveRows.innerHTML, /MOCK|liveRetained/);
-  assert.doesNotMatch(elements.liveRows.innerHTML, /liveEligible|data-live-audit|voice-highlight/);
+  vm.runInContext(draw, context);
+  assert.match(elements.trackRows.innerHTML, /MOCK|liveRetained/);
+  assert.doesNotMatch(elements.trackRows.innerHTML, /liveEligible|data-live-audit|voice-highlight/);
   // A recently qualified retained receipt must not outrank fresh evidence,
   // masquerade as new, or survive its server-supplied display deadline offline.
   const retainedRow = { ...context.liveData.rows[0], symbol: 'RECEIPT', qualifiedAt: now - 1000 };
   const freshRow = row(now, { address: '0x' + '9'.repeat(40), symbol: 'FRESH', qualifiedAt: now - 300000 });
-  for (const mode of ['new', 'priority', 'volume']) {
-    elements.liveSort.value = mode;
-    context.liveData.rows = [retainedRow, freshRow];
-    vm.runInNewContext(draw, context);
-    assert.ok(elements.liveRows.innerHTML.indexOf('FRESH') < elements.liveRows.innerHTML.indexOf('RECEIPT'), mode);
-    assert.doesNotMatch(elements.liveRows.innerHTML, /new-sighting/);
-  }
+  context.liveData.rows = [retainedRow, freshRow];
+  vm.runInContext(draw, context);
+  assert.ok(elements.trackRows.innerHTML.indexOf('FRESH') < elements.trackRows.innerHTML.indexOf('RECEIPT'), 'the fresher evidence leads');
+  assert.doesNotMatch(elements.trackRows.innerHTML, /new-sighting/);
   context.t = (key, args) => key === 'liveCardClocks' ? JSON.stringify(args) : key;
-  context.liveFingerprint = '';
-  vm.runInNewContext(draw, context);
-  assert.ok(elements.liveRows.innerHTML.includes(JSON.stringify({ first: String(freshRow.qualifiedAt), quote: String(freshRow.sourceUpdatedAt) })),
+  // A changed formatter is invisible to the fingerprint by design, so the test
+  // forces the repaint the way a locale switch does.
+  context.trackFingerprint = '';
+  vm.runInContext(draw, context);
+  assert.ok(elements.trackRows.innerHTML.includes(JSON.stringify({ first: String(freshRow.qualifiedAt), quote: String(freshRow.sourceUpdatedAt) })),
     'first qualification and quote refresh are visibly separate clocks');
   context.t = key => key;
   for (const displayUntil of [now, now - 1, null, undefined]) {
     context.serviceOnline = false;
     context.liveData.rows = [{ ...retainedRow, displayUntil }];
-    vm.runInNewContext(draw, context);
-    assert.doesNotMatch(elements.liveRows.innerHTML, /RECEIPT/, 'expired receipts are removed even without a successful fetch');
+    vm.runInContext(draw, context);
+    assert.doesNotMatch(elements.trackRows.innerHTML, /RECEIPT/, 'expired receipts are removed even without a successful fetch');
   }
   context.serviceOnline = true;
   for (const clocks of [{ expiresAt: now }, { sourceUpdatedAt: now - 60001 }, { sourceUpdatedAt: now + 1 }]) {
     context.liveData.rows = [{ ...freshRow, ...clocks }];
-    vm.runInNewContext(draw, context);
-    assert.doesNotMatch(elements.liveRows.innerHTML, /FRESH/, 'client revalidates clocks instead of trusting a frozen READY flag');
+    vm.runInContext(draw, context);
+    assert.doesNotMatch(elements.trackRows.innerHTML, /FRESH/, 'client revalidates clocks instead of trusting a frozen READY flag');
   }
   // A contract first seen earlier remains visible while a current snapshot
   // still passes. The old first-seen clock only prevents it looking newly seen.
-  elements.liveSort.value = 'new';
   const other = '0x' + '4'.repeat(40);
   context.liveData.rows = [row(now, { symbol: 'OLD', firstSeenAt: now - 1800000, newAt: 0 }),
     row(now, { address: other, symbol: 'NEWER', firstSeenAt: now - 5000, newAt: now - 5000 })];
-  vm.runInNewContext(draw, context);
-  assert.match(elements.liveRows.innerHTML, /NEWER/); assert.match(elements.liveRows.innerHTML, /OLD/);
-  assert.ok(elements.liveRows.innerHTML.indexOf('NEWER') < elements.liveRows.innerHTML.indexOf('OLD'));
+  vm.runInContext(draw, context);
+  assert.match(elements.trackRows.innerHTML, /NEWER/); assert.match(elements.trackRows.innerHTML, /OLD/);
+  assert.ok(elements.trackRows.innerHTML.indexOf('NEWER') < elements.trackRows.innerHTML.indexOf('OLD'));
   context.voiceSpotlight = { id: 1 }; context.voiceSpotlightSelected = 'bsc:' + CA;
   context.voiceSpotlightRank = r => r.address === CA ? 0 : Infinity;
-  vm.runInNewContext(draw, context);
-  assert.match(elements.liveRows.innerHTML, /OLD/);
-  assert.match(elements.liveRows.innerHTML, /voice-highlight/);
+  vm.runInContext(draw, context);
+  assert.match(elements.trackRows.innerHTML, /OLD/);
+  assert.match(elements.trackRows.innerHTML, /voice-highlight/);
   context.voiceSpotlightSignature = 'expired'; context.voiceSpotlightRank = () => Infinity;
-  vm.runInNewContext(draw, context);
-  assert.doesNotMatch(elements.liveRows.innerHTML, /voice-highlight/);
+  vm.runInContext(draw, context);
+  assert.doesNotMatch(elements.trackRows.innerHTML, /voice-highlight/);
 
   // A historical audit-only candidate cannot refill the fast market pool after
   // current discovery has removed it.
@@ -196,8 +200,8 @@ test('AVE live endpoint allowlists fields, keeps quote expiry and supplies the a
   context.backendDisposition = candidate => candidate.status === 'X_REVIEW' ? 'chain' : 'waiting';
   context.voiceSpotlightSelected = 'bsc:' + auditOnly;
   context.voiceSpotlightRank = candidate => candidate.address === auditOnly ? 0 : Infinity;
-  vm.runInNewContext(draw, context);
-  assert.doesNotMatch(elements.liveRows.innerHTML, /AUDIT/);
+  vm.runInContext(draw, context);
+  assert.doesNotMatch(elements.trackRows.innerHTML, /AUDIT/);
 
   // A just-announced live row comes from the status snapshot immediately,
   // without waiting for the independent live-feed request to finish.
@@ -208,10 +212,10 @@ test('AVE live endpoint allowlists fields, keeps quote expiry and supplies the a
     staleAt: now + 20000, firstSeenAt: now - 500, newAt: now - 500 }] } };
   context.voiceSpotlightSelected = 'bsc:' + instant;
   context.voiceSpotlightRank = candidate => candidate.address === instant ? 0 : Infinity;
-  vm.runInNewContext(draw, context);
-  assert.match(elements.liveRows.innerHTML, /INSTANT/);
-  assert.match(elements.liveRows.innerHTML, /OLD/);
-  assert.ok(elements.liveRows.innerHTML.indexOf('INSTANT') < elements.liveRows.innerHTML.indexOf('NEWER'),
+  vm.runInContext(draw, context);
+  assert.match(elements.trackRows.innerHTML, /INSTANT/);
+  assert.match(elements.trackRows.innerHTML, /OLD/);
+  assert.ok(elements.trackRows.innerHTML.indexOf('INSTANT') < elements.trackRows.innerHTML.indexOf('NEWER'),
     'a just-announced candidate is pinned ahead of the remaining current cards');
 
   const remindedRows = Array.from({ length: 16 }, (_, index) => ({ chain: 'bsc',
@@ -224,8 +228,8 @@ test('AVE live endpoint allowlists fields, keeps quote expiry and supplies the a
     const rank = remindedRows.findIndex(row => row.address === candidate.address);
     return rank < 0 ? Infinity : rank;
   };
-  vm.runInNewContext(draw, context);
-  assert.equal((elements.liveRows.innerHTML.match(/voice-highlight/g) || []).length, 16,
+  vm.runInContext(draw, context);
+  assert.equal((elements.trackRows.innerHTML.match(/voice-highlight/g) || []).length, 16,
     'every token in a large spoken batch remains visible above ordinary cards');
 
   // The grade - and the junk rule that reads from it. A row the engine graded D
@@ -240,14 +244,27 @@ test('AVE live endpoint allowlists fields, keeps quote expiry and supplies the a
     row(now, { symbol: 'GRADED', trackGrade: 'A' }),
     row(now, { address: '0x' + 'b'.repeat(40), symbol: 'UNGRADED' })
   ] };
-  context.liveFingerprint = '';
-  vm.runInNewContext(draw, context);
-  assert.match(elements.liveRows.innerHTML, /GRADED/);
-  assert.match(elements.liveRows.innerHTML, /UNGRADED/, 'a row with no grade is not junk');
-  assert.doesNotMatch(elements.liveRows.innerHTML, /JUNK|live-tag track-grade track-grade-d/);
-  assert.match(elements.liveRows.innerHTML, /live-tag track-grade track-grade-a/,
+  vm.runInContext(draw, context);
+  assert.match(elements.trackRows.innerHTML, /GRADED/);
+  assert.match(elements.trackRows.innerHTML, /UNGRADED/, 'a row with no grade is not junk');
+  assert.doesNotMatch(elements.trackRows.innerHTML, /JUNK|live-tag track-grade track-grade-d/);
+  assert.match(elements.trackRows.innerHTML, /live-tag track-grade track-grade-a/,
     'a graded row wears the same badge the board prints');
-  assert.match(elements.liveMeta.textContent, /boardJunkCulled/, 'the cleared count is reported, not swallowed');
+  assert.match(elements.trackMeta.textContent, /boardJunkCulled/, 'the cleared count is reported, not swallowed');
+
+  // One board means one card per token: a radar row whose address the tracking
+  // set already holds is the board's own card, richer in every way, so the
+  // radar's copy of it is dropped rather than painted beside it. The board card
+  // for that token still appears - exactly once, as a track card.
+  context.lastData.track = [{ chain: 'bsc', address: CA, symbol: 'GRADED', source: 'market' }];
+  vm.runInContext(draw, context);
+  assert.match(elements.trackRows.innerHTML, /UNGRADED/);
+  assert.equal((elements.trackRows.innerHTML.match(/>GRADED</g) || []).length, 1,
+    'the held token keeps exactly one card');
+  assert.doesNotMatch(elements.trackRows.innerHTML, /class="live-card"/,
+    'the radar copy of a held token is dropped, not painted beside the board card');
+  assert.doesNotMatch(elements.trackRows.innerHTML, /JUNK/);
+  context.lastData.track = [];
 });
 
 test('live endpoint retains a passed display receipt without disguising it as fresh evidence or feeding speech', async () => {

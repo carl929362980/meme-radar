@@ -814,28 +814,11 @@
     </section>
 
 
-    <section id="livePanel" class="panel live-panel" aria-labelledby="liveTitle">
-      <div class="live-heading">
-        <div><h2 id="liveTitle" data-i18n="liveTitle">候选雷达</h2><small data-i18n="radarDisclaimer">自动筛选 · 观察线索，非安全保证</small></div>
-        <label class="live-toggle"><input id="liveAuto" type="checkbox" checked><span data-i18n="liveAuto">自动更新</span></label>
-      </div>
-      <div class="live-toolbar">
-        <input id="liveSearch" class="field" type="search" autocomplete="off" data-i18n-placeholder="searchPlaceholder" placeholder="搜索代币名称、简称或合约地址">
-        <select id="liveSort" class="field" data-i18n-aria="liveSort" aria-label="发现排序">
-          <option value="priority" data-i18n="livePriority">2–8万市值优先</option>
-          <option value="volume" data-i18n="liveVolumeSort">5分钟成交额优先</option>
-          <option value="new" selected data-i18n="liveNewSort">最近出现</option>
-        </select>
-        <span id="liveState" role="status" aria-live="polite" class="live-tag"></span>
-      </div>
-      <div id="liveMeta" class="live-meta"></div>
-      <div id="liveRows" class="live-grid"><div class="empty" data-i18n="preparing">准备中</div></div>
-    </section>
-
     <section id="trackPanel" class="panel live-panel" aria-labelledby="trackTitle">
       <div class="live-heading">
         <div><h2 id="trackTitle" data-i18n="boardTitle">聪明钱 · 追踪</h2><small data-i18n="boardDisclaimer">钱包在动 + 池子在变 · 首见对比</small></div>
         <span id="trackState" role="status" aria-live="polite" class="live-tag"></span>
+        <label class="live-toggle"><input id="liveAuto" type="checkbox" checked><span data-i18n="liveAuto">自动更新</span></label>
         <select id="trackSort" class="field" data-i18n-aria="boardSort" aria-label="看板排序">
           <option value="grade" selected data-i18n="boardSortGrade">评级优先</option>
           <option value="signal" data-i18n="boardSortSignal">聪明钱优先</option>
@@ -1750,8 +1733,10 @@
     let liveBusy = false;
     // A failed candidate request is not evidence that the local service is down.
     let liveRefreshErrorChain = '';
-    let liveFingerprint = '';
-    const liveQueued = new Map();
+    // The radar's rows that the board does not already carry. renderLive computes
+    // them; renderTrack paints them into the one grid, so a lead is never shown
+    // twice on this page and never shown on a panel that knows less about it.
+    let radarRows = [], radarCulled = 0;
     // The signal stream keeps its own snapshot: it is a different measurement
     // from the candidate radar, and letting one overwrite the other would make a
     // rendering failure look like a data failure.
@@ -2138,8 +2123,7 @@
         const candidate = voiceSpotlightRow(item), chain = chainCatalog.find(function (c) { return c.id === item.chain; });
         return (candidate && candidate.symbol ? String(candidate.symbol) + ' · ' : '') + (chain ? chainLabel(chain) : item.chain) + ' · ' + item.address.slice(0, 8) + '…' + item.address.slice(-6);
       };
-      const query = byId('liveSearch').value.trim().toLowerCase();
-      const filtered = ready && row && query && ![row.symbol, row.name, row.address].join(' ').toLowerCase().includes(query);
+      const filtered = false;
       const title = voiceSpotlight.playback === 'playing' ? 'voiceSpotlightPlaying' : voiceSpotlight.playback === 'completed' ? 'voiceSpotlightRecent' : 'voiceSpotlightInterrupted';
       const html = '<div class="voice-spotlight-heading"><strong id="voiceSpotlightTitle">' + escapeHtml(t(title)) + '</strong><span class="muted">' + escapeHtml(formatClock(voiceSpotlight.startedAt)) + '</span><button type="button" class="mini-button" data-voice-action="dismiss">' + escapeHtml(t('voiceSpotlightDismiss')) + '</button></div>'
         + '<div class="voice-spotlight-main"><div><b>' + escapeHtml(label(entry)) + '</b><code class="addr mono">' + escapeHtml(entry.address) + '</code><small class="' + (ready ? 'good' : 'warn') + '">' + escapeHtml(t(filtered ? 'voiceSpotlightFiltered' : state)) + '</small></div>'
@@ -2184,7 +2168,7 @@
       // The chain request may fail, or a risk may arrive while it is pending.
       if (!voiceSpotlight || voiceSpotlight.id !== alertId || voiceSpotlightSelected !== selected || entry.chain !== activeChain(lastData)
         || voiceSpotlightState(entry, Date.now()) !== 'voiceSpotlightReady') return;
-      byId('liveSearch').value = ''; byId('liveSort').value = 'new'; renderCandidates();
+      renderCandidates();
       const target = byId('live-card-' + encodeURIComponent(voiceSpotlightKey(entry))) || byId('voiceSpotlight');
       target?.scrollIntoView?.({ block: 'start', behavior: 'auto' }); target?.focus?.({ preventScroll: true });
     }
@@ -2633,13 +2617,6 @@
         .replace(/：WAIT_RECHECK$/, '：等待复查');
     }
 
-    function liveEmptyMessage(data, query, stale, status) {
-      if (query) return t('liveFilteredEmpty');
-      if (stale && data?.lastSuccessAt) return t('liveStale');
-      if (data?.receivedCount > 0) return t(data.diagnostics?.outsideRange === data.receivedCount ? 'liveNoScope' : 'liveExcluded');
-      return t(data?.lastSuccessAt ? 'liveEmpty' : status);
-    }
-
     function renderLive() {
       const chain = viewChain || activeChain(lastData);
       const data = liveData && liveData.chain === chain ? liveData : null;
@@ -2659,28 +2636,22 @@
         || market?.pauseCode === 'AVE_RATE_LIMITED' && marketBlockedUntil > Date.now());
       liveState.hidden = rateLimitShownAbove;
       liveState.textContent = rateLimitShownAbove ? '' : t(status);
-      const query = byId('liveSearch').value.trim().toLowerCase(), mode = byId('liveSort').value;
       const observedRows = unifiedPoolRows(chain);
-      let rows = observedRows.filter(function (row) {
-        return Number.isFinite(voiceSpotlightRank(row, Date.now()))
-          || !query || [row.symbol, row.name, row.address].join(' ').toLowerCase().includes(query);
-      });
       const now = Date.now();
-      rows = rows.slice().sort(function (a, b) {
+      const rows = observedRows.slice().sort(function (a, b) {
         const aVoice = voiceSpotlightRank(a, now), bVoice = voiceSpotlightRank(b, now);
         if (aVoice !== bVoice) return aVoice - bVoice;
         return Number(b.auditEligible) - Number(a.auditEligible)
-          || (mode === 'new' ? number(b.qualifiedAt || b.newAt || b.firstSeenAt) - number(a.qualifiedAt || a.newAt || a.firstSeenAt) : 0)
-          || (mode === 'priority' ? Number(b.priorityBand) - Number(a.priorityBand) : 0)
+          || number(b.qualifiedAt || b.newAt || b.firstSeenAt) - number(a.qualifiedAt || a.newAt || a.firstSeenAt)
           || number(b.volume5m) - number(a.volume5m)
           || voiceSpotlightKey(a).localeCompare(voiceSpotlightKey(b));
       });
-      const reminded = rows.filter(function (row) { return Number.isFinite(voiceSpotlightRank(row, Date.now())); });
-      rows = reminded.concat(rows.filter(function (row) { return !Number.isFinite(voiceSpotlightRank(row, Date.now())); })
+      const reminded = rows.filter(function (row) { return Number.isFinite(voiceSpotlightRank(row, now)); });
+      const ordered = reminded.concat(rows.filter(function (row) { return !Number.isFinite(voiceSpotlightRank(row, now)); })
         .slice(0, Math.max(0, 15 - reminded.length)));
       // The board's own grade decides what earns a card here as well, which is
       // the whole point of grading every lead once instead of twice: measured on
-      // the live feed, every row this panel showed was already a lead the board
+      // the live feed, every row the radar showed was already a lead the board
       // carried, and the remainder had nothing behind it at all. A row that was
       // just spoken is kept whatever its grade - the spotlight has to be able to
       // find its card - and everything cleared is counted, because a list that
@@ -2702,45 +2673,19 @@
       // spoken is kept whatever its grade, because the spotlight has to be able to
       // find its card.
       const isJunk = function (row) { return gradeOfRow(row) === 'D'; };
-      const kept = rows.filter(function (row) { return isSpotlit(row) || !isJunk(row); });
-      const culled = rows.length - kept.length;
-      rows = kept;
-      byId('liveMeta').textContent = t('liveBrief', { n: rows.length, time: data && data.lastSuccessAt ? relativeTime(data.lastSuccessAt) : t('noRecord') })
-        + (culled > 0 ? ' · ' + t('boardJunkCulled', { n: formatCount(culled) }) : '');
-      byId('liveMeta').title = t('liveMeta', { chain: chainLabel(chainCatalog.find(function (item) { return item.id === chain; })),
-        time: data && data.lastSuccessAt ? relativeTime(data.lastSuccessAt) : t('noRecord'), shown: rows.length, total: data && data.receivedCount || 0 })
-        + (data && data.diagnostics ? ' · ' + t('liveCoverage', { received: data.receivedCount || 0, scope: data.diagnostics.inRange,
-          pending: data.diagnostics.pending, stale: observedRows.filter(function (row) { return row.discoveryState === 'STALE'; }).length,
-          ready: observedRows.filter(function (row) { return row.auditEligible; }).length, excluded: data.diagnostics.excluded }) : '');
-      const enabledChains = lastData && lastData.scheduler && lastData.scheduler.enabledChains || [];
-      const fingerprint = JSON.stringify([rows, data && data.diagnostics, chain, currentLocale, stale, status, mode, query, enabledChains, voiceSpotlight && voiceSpotlight.id, voiceSpotlightSelected, voiceSpotlightSignature, Math.floor(Date.now() / 60000)]);
-      if (fingerprint === liveFingerprint) return;
-      liveFingerprint = fingerprint;
-      byId('liveRows').innerHTML = rows.map(function (row) {
-        const appearedAt = row.qualifiedAt || row.newAt;
-        const isNew = row.auditEligible === true && !row.stale && !row.retainedSnapshot
-          && appearedAt && now - appearedAt >= 0 && now - appearedAt < 120000;
-        const spotlight = Number.isFinite(voiceSpotlightRank(row, Date.now()));
-        const links = radarLinks(row);
-        const unit = function (label, value, tone) { return '<div><small>' + escapeHtml(label) + '</small><b class="mono ' + (tone || '') + '">' + escapeHtml(value) + '</b></div>'; };
-        // The same grade the board prints, because it is literally the same
-        // reading - the engine joins it on the address rather than recomputing it
-        // here, so the two panels cannot end up disagreeing about one token.
-        const rowGrade = gradeOfRow(row);
-        const gradeBadge = rowGrade ? '<span class="live-tag track-grade track-grade-' + rowGrade.toLowerCase()
-          + '" title="' + escapeHtml(t('trackGrade' + rowGrade)) + '">' + escapeHtml(rowGrade) + '</span> ' : '';
-        return '<article id="live-card-' + encodeURIComponent(voiceSpotlightKey(row)) + '" tabindex="-1" class="live-card' + (isNew ? ' new-sighting' : '') + (spotlight ? ' voice-highlight' : '') + '"><div class="live-card-head"><strong>' + escapeHtml(row.symbol) + '</strong>'
-          + '<span>' + gradeBadge + '<span class="live-tag">' + escapeHtml(t(row.retainedSnapshot ? 'liveRetained' : row.discoveryState === 'PENDING' ? 'livePending' : row.stale ? 'liveStale' : row.auditEligible ? 'liveEligible' : isNew ? 'liveNew' : 'liveUnreviewed')) + '</span></span></div><div class="muted">' + escapeHtml(row.name) + '</div>'
-          + '<div class="addr mono">' + escapeHtml(row.address.slice(0,8) + '…' + row.address.slice(-6)) + '</div>'
-          + '<div class="live-numbers">' + unit(t('liveCap'), formatMoney(row.marketCap))
-          + unit(t('liveLp'), Number.isFinite(row.liquidity) ? formatMoney(row.liquidity) : t('liveFetching'))
-          + unit(t('liveVolume'), Number.isFinite(row.volume5m) ? formatMoney(row.volume5m) : t('liveFetching'))
-          + unit(t(row.ageBasis === 'pool' || row.ageBasis === 'trade' ? 'poolAge' : row.ageBasis === 'launch' ? 'launchAge' : 'ageLabel'), row.createdAt ? formatDuration(Math.max(0, Date.now() - row.createdAt*1000)) : t('liveFetching')) + '</div>'
-          + '<small class="muted">' + escapeHtml(t('liveCardClocks', {
-            first: appearedAt ? relativeTime(appearedAt) : t('noRecord'),
-            quote: row.sourceUpdatedAt ? relativeTime(row.sourceUpdatedAt) : t('noRecord') })) + '</small>' + links + '</article>';
-      }).join('') || '<div class="empty">' + escapeHtml(liveEmptyMessage(data, query, stale, status))
-        + (query ? '<p><button class="mini-button" type="button" data-live-reset>' + escapeHtml(t('liveShowAll')) + '</button></p>' : '') + '</div>';
+      const kept = ordered.filter(function (row) { return isSpotlit(row) || !isJunk(row); });
+      radarCulled = ordered.length - kept.length;
+      // The radar is not a second board. Measured before the merge, every row it
+      // showed was already a tracking record (100% overlap, both chains), so the
+      // rows kept here are only the ones the board does not hold yet - and each
+      // of them is handed to the board's own renderer rather than painted on a
+      // panel of its own. One grid, one grade, one address one card.
+      const board = new Set(((lastData && Array.isArray(lastData.track)) ? lastData.track : [])
+        .map(function (row) { return String(row.chain || '').toLowerCase() + ':' + addressIdentity(row.address); }));
+      radarRows = kept.filter(function (row) {
+        return !board.has(String(row.chain || chain).toLowerCase() + ':' + addressIdentity(row.address));
+      });
+      renderTrack();
     }
 
     // The tracking board pairs every change with the sighting it is measured
@@ -2758,6 +2703,10 @@
       const chain = activeChain(data);
       const tracked = data && Array.isArray(data.track) ? data.track : [];
       const stream = signalData && signalData.chain === chain && Array.isArray(signalData.signals) ? signalData.signals : [];
+      // The radar's remainder: qualified leads the tracking set does not hold
+      // yet. They wear the same grade the engine gave them and sit in the same
+      // grid, so the page has one board rather than two half-boards.
+      const radar = Array.isArray(radarRows) ? radarRows : [];
       const now = Date.now();
       // A lead that merely appeared in the trade feed is a sighting, not an
       // event: it carries no side, no wallets and no money, and it duplicates
@@ -2851,7 +2800,12 @@
           card.first, card.last, card.gate, card.cooling, card.row && card.row.signals,
           card.wallet && card.wallet.id, card.wallet && card.wallet.kind, card.wallet && card.wallet.wallets,
           card.wallet && card.wallet.amountUsd, card.wallet && card.wallet.at];
-      }), mode, currentLocale, data && data.generatedAt, signalData && signalData.chain, newPools]);
+      }), mode, currentLocale, data && data.generatedAt, signalData && signalData.chain, newPools,
+      // The radar rows are part of this board now, so the whole rows belong in
+      // the fingerprint - not a hand-picked field list, which is how an age
+      // basis or an audit flag could silently stop repainting the grid.
+      radar, radarCulled, voiceSpotlight && voiceSpotlight.id, voiceSpotlightSelected,
+      Math.floor(Date.now() / 60000)]);
       if (signature === trackFingerprint) return;
       trackFingerprint = signature;
 
@@ -2862,7 +2816,7 @@
       // money in it, which is the same failure the counts below exist to stop.
       byId('trackState').textContent = t(signalStatusKey(signalData && signalData.chain === chain ? signalData : null));
       const summary = data && data.trackSummary;
-      byId('trackMeta').textContent = summary
+      const summaryText = summary
         // The count is the board's own, not the tracking set's: this board is
         // both feeds together, and printing only the tracking half would
         // understate it by the majority.
@@ -2911,6 +2865,11 @@
           // from a feed that has gone quiet.
           + (newPools > 0 ? ' · ' + t('boardNewPools', { n: formatCount(newPools) }) : '')
         : '';
+      // The radar's junk cull, reported on the board it now feeds: a list that
+      // silently shrinks cannot be told apart from a source that went quiet, so
+      // the cleared count stays visible even when no track summary exists yet.
+      byId('trackMeta').textContent = summaryText
+        + (radarCulled > 0 ? (summaryText ? ' · ' : '') + t('boardJunkCulled', { n: formatCount(radarCulled) }) : '');
 
       const money = function (value) { return hasFiniteValue(value) ? formatMoney(value) : t('unknown'); };
       const count = function (value) { return hasFiniteValue(value) ? Number(value).toLocaleString(currentLocale) : t('unknown'); };
@@ -2930,7 +2889,7 @@
       const share = function (value) { return hasFiniteValue(value) ? (Number(value) * 100).toFixed(1) + '%' : t('unknown'); };
       const points = function (delta) { const moved = Number(delta) * 100; return (moved > 0 ? '+' : '') + moved.toFixed(1) + 'pp'; };
 
-      byId('trackRows').innerHTML = cards.map(function (card) {
+      const cardHtml = cards.map(function (card) {
         const row = card.row, wallet = card.wallet, first = card.first, last = card.last;
         const contractFatal = Boolean(row && row.risk) && row.risk.verdict === 'FATAL';
         const risk = Boolean(row) && (row.quadrant === 'POOL_PULLED' || row.quadrant === 'DISTRIBUTION' || contractFatal);
@@ -2943,6 +2902,12 @@
         const tagClass = row ? (TRACK_CLASS[row.quadrant] || 'track-tag-watch')
           : (wallet.kind === 'EXIT' ? 'track-tag-pool' : 'track-tag-breakout');
         const axisRow = function (label, firstValue, lastValue, render, format) {
+          // A row where neither reading exists is not a data point, it is noise:
+          // "未知 → 未知" told a reader nothing twice and made the card look
+          // broken. A row is printed when at least one side is a real reading -
+          // an unknown beside a number is honest (that is what a late baseline
+          // looks like), two unknowns are not.
+          if (!hasFiniteValue(firstValue) && !hasFiniteValue(lastValue)) return '';
           const ratio = ratioOf(firstValue, lastValue);
           const known = ratio !== null;
           // A value that has not moved is neither rising nor falling, so it is
@@ -3016,18 +2981,27 @@
               + escapeHtml(formatClock(signal.at)) + '</span> · ' + escapeHtml(signalText(signal)) + '</div>';
           }).join('') + '</div>'
           : '<div class="track-signals"><span class="muted">' + escapeHtml(t('trackNoSignal')) + '</span></div>';
-        const baseline = row
-          ? t('trackFirstSeen') + ' ' + escapeHtml(formatClock(row.firstSeenAt))
-            + ' · ' + escapeHtml(t('trackAnchorPrice', { v: price(first.price) }))
-            + ' · ' + escapeHtml(t('trackAnchorCap', { v: money(first.marketCap) }))
-            // A lead whose market baseline came from the discovery feed has no
-            // price axis, because that feed does not publish one. Saying so is
-            // cheaper than leaving a reader to conclude the reading was lost.
-            + (row.source === 'feed'
-              ? ' · <span class="track-source" title="' + escapeHtml(t('trackFeedAnchor')) + '">' + escapeHtml(t('trackFeedAnchor')) + '</span>'
-              : '')
-          : t('trackFirstSeen') + ' ' + escapeHtml(formatClock(wallet.firstSeenAt))
-            + ' · ' + escapeHtml(t('trackAnchorCap', { v: money(wallet.firstMarketCap) }));
+        const baseline = (function () {
+          // Anchor parts with no reading are dropped rather than printed as
+          // 未知: "首见 -- · 首见市值 未知" is one fact and one non-fact glued
+          // together. A wallet-only lead the pool feed never sighted carries a
+          // single honest line - the wallet side - and nothing pretending to be
+          // a pool anchor.
+          if (!row) {
+            const walletParts = [];
+            if (number(wallet.firstSeenAt) > 0) walletParts.push(t('trackFirstSeen') + ' ' + escapeHtml(formatClock(wallet.firstSeenAt)));
+            if (hasFiniteValue(wallet.firstMarketCap)) walletParts.push(escapeHtml(t('trackAnchorCap', { v: money(wallet.firstMarketCap) })));
+            return walletParts.join(' · ');
+          }
+          const parts = [t('trackFirstSeen') + ' ' + escapeHtml(formatClock(row.firstSeenAt))];
+          if (hasFiniteValue(first.price)) parts.push(escapeHtml(t('trackAnchorPrice', { v: price(first.price) })));
+          if (hasFiniteValue(first.marketCap)) parts.push(escapeHtml(t('trackAnchorCap', { v: money(first.marketCap) })));
+          // A lead whose market baseline came from the discovery feed has no
+          // price axis, because that feed does not publish one. Saying so is
+          // cheaper than leaving a reader to conclude the reading was lost.
+          if (row.source === 'feed') parts.push('<span class="track-source" title="' + escapeHtml(t('trackFeedAnchor')) + '">' + escapeHtml(t('trackFeedAnchor')) + '</span>');
+          return parts.join(' · ');
+        })();
         // This is the seam between the two feeds: one line, on one card, saying
         // which side moved and how much money moved with it. Everything the old
         // wallet panel led with is here, next to the pool it belongs to.
@@ -3092,7 +3066,13 @@
         const grade = trackGradeOf(card);
         const gradeBadge = '<span class="live-tag track-grade ' + (TRACK_GRADE_CLASS[grade] || 'track-grade-d')
           + '" title="' + escapeHtml(t(TRACK_GRADE_TAG[grade] || 'trackGradeD')) + '">' + escapeHtml(grade) + '</span>';
-        return '<article class="track-card' + (risk ? ' risk' : '') + '">'
+        // The spotlight anchor lives on the board now: a spoken token the board
+        // carries is highlighted right where its full card is, instead of on a
+        // separate radar row that no longer exists.
+        const cardKey = String((row ? row.chain : wallet.chain) || '') + ':' + addressIdentity((row ? row.address : wallet.address) || '');
+        const spotlighted = Boolean(voiceSpotlight) && voiceSpotlightSelected === cardKey;
+        return '<article' + (spotlighted ? ' id="live-card-' + encodeURIComponent(voiceSpotlightSelected) + '" tabindex="-1"' : '')
+          + ' class="track-card' + (risk ? ' risk' : '') + (spotlighted ? ' voice-highlight' : '') + '">'
           + '<div class="track-card-head"><strong>' + escapeHtml((row ? row.symbol : wallet.symbol) || '?') + '</strong><span>'
           + gradeBadge + ' '
           + '<span class="live-tag ' + tagClass + '">' + escapeHtml(t(tag)) + '</span> '
@@ -3112,9 +3092,39 @@
           // and a card that put behaviour first would have the reader form an
           // opinion before reaching the reason not to.
           + vetoLine(row || wallet)
-          + '<div class="track-axes">' + axes + '</div>'
+          + (axes ? '<div class="track-axes">' + axes + '</div>' : '')
           + signalBlock + '</article>';
-      }).join('') || '<div class="empty">' + escapeHtml(t('boardEmpty')) + '</div>';
+      }).join('');
+      // The radar's remainder, painted into the same grid as ordinary cards.
+      // It keeps the radar card's own compact shape - cap, liquidity, five-minute
+      // volume, pool age - because these rows have no tracking record to draw
+      // axes from, and a shape pretending otherwise would invent readings.
+      const radarHtml = radar.map(function (row) {
+        const appearedAt = row.qualifiedAt || row.newAt;
+        const isNew = row.auditEligible === true && !row.stale && !row.retainedSnapshot
+          && appearedAt && now - appearedAt >= 0 && now - appearedAt < 120000;
+        const spotlight = Number.isFinite(voiceSpotlightRank(row, Date.now()));
+        const links = radarLinks(row);
+        const unit = function (label, value, tone) { return '<div><small>' + escapeHtml(label) + '</small><b class="mono ' + (tone || '') + '">' + escapeHtml(value) + '</b></div>'; };
+        // The same grade the board prints, because it is literally the same
+        // reading - the engine joins it on the address rather than recomputing it
+        // here, so the two card kinds cannot end up disagreeing about one token.
+        const rowGrade = typeof row.trackGrade === 'string' && 'SABCD'.indexOf(row.trackGrade) >= 0 ? row.trackGrade : '';
+        const gradeBadge = rowGrade ? '<span class="live-tag track-grade track-grade-' + rowGrade.toLowerCase()
+          + '" title="' + escapeHtml(t('trackGrade' + rowGrade)) + '">' + escapeHtml(rowGrade) + '</span> ' : '';
+        return '<article id="live-card-' + encodeURIComponent(voiceSpotlightKey(row)) + '" tabindex="-1" class="live-card' + (isNew ? ' new-sighting' : '') + (spotlight ? ' voice-highlight' : '') + '"><div class="live-card-head"><strong>' + escapeHtml(row.symbol) + '</strong>'
+          + '<span>' + gradeBadge + '<span class="live-tag">' + escapeHtml(t(row.retainedSnapshot ? 'liveRetained' : row.discoveryState === 'PENDING' ? 'livePending' : row.stale ? 'liveStale' : row.auditEligible ? 'liveEligible' : isNew ? 'liveNew' : 'liveUnreviewed')) + '</span></span></div><div class="muted">' + escapeHtml(row.name) + '</div>'
+          + '<div class="addr mono">' + escapeHtml(row.address.slice(0,8) + '…' + row.address.slice(-6)) + '</div>'
+          + '<div class="live-numbers">' + unit(t('liveCap'), formatMoney(row.marketCap))
+          + unit(t('liveLp'), Number.isFinite(row.liquidity) ? formatMoney(row.liquidity) : t('liveFetching'))
+          + unit(t('liveVolume'), Number.isFinite(row.volume5m) ? formatMoney(row.volume5m) : t('liveFetching'))
+          + unit(t(row.ageBasis === 'pool' || row.ageBasis === 'trade' ? 'poolAge' : row.ageBasis === 'launch' ? 'launchAge' : 'ageLabel'), row.createdAt ? formatDuration(Math.max(0, Date.now() - row.createdAt*1000)) : t('liveFetching')) + '</div>'
+          + '<small class="muted">' + escapeHtml(t('liveCardClocks', {
+            first: appearedAt ? relativeTime(appearedAt) : t('noRecord'),
+            quote: row.sourceUpdatedAt ? relativeTime(row.sourceUpdatedAt) : t('noRecord') })) + '</small>' + links + '</article>';
+      }).join('');
+      byId('trackRows').innerHTML = (cardHtml + radarHtml)
+        || '<div class="empty">' + escapeHtml(t('boardEmpty')) + '</div>';
     }
 
     // The signal stream answers "who is moving together", so a card leads with
@@ -3523,31 +3533,17 @@
 
     attachVoiceSpotlight();
     byId('searchInput').addEventListener('input', renderCandidates);
-    byId('liveSearch').addEventListener('input', renderLive);
-    byId('liveSort').addEventListener('change', renderLive);
     byId('trackSort').addEventListener('change', function () { trackFingerprint = ''; renderTrack(); });
     byId('liveAuto').addEventListener('change', function (event) {
       liveEnabled = event.target.checked; writeStorage('memeRadarLiveEnabledV1', liveEnabled); refreshLive();
     });
-    byId('liveRows').addEventListener('click', async function (event) {
-      if (event.target.closest('[data-live-reset]')) {
-        byId('liveSearch').value = ''; byId('liveSort').value = 'priority'; renderLive(); return;
-      }
+    // The radar's cards now live in the board's grid, so its copy buttons are
+    // delegated here. The audit button and its queue went with the radar panel:
+    // no current markup emits data-live-audit, and a handler for a button that
+    // cannot exist is exactly the zombie code this page keeps having to bury.
+    byId('trackRows').addEventListener('click', async function (event) {
       const copy = event.target.closest('[data-action="copy"]');
       if (copy) return copyText(decodeURIComponent(copy.dataset.address));
-      const button = event.target.closest('[data-live-audit]');
-      if (!button || button.disabled) return;
-      const chain = viewChain || activeChain(lastData), address = decodeURIComponent(button.dataset.liveAudit);
-      button.disabled = true;
-      try {
-        const response = await fetch('/api/live-review', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({chain:chain,address:address}), signal:AbortSignal.timeout(8000)});
-        const result = await response.json();
-        if (!response.ok || !result.accepted) return showToast(t(result.reason === 'queue_full' ? 'liveQueueFull' : result.reason === 'chain_not_scanning' ? 'liveAuditScope' : 'liveAuditDenied'));
-        liveQueued.set(chain + ':' + address, Date.now());
-        if (liveQueued.size > 100) liveQueued.delete(liveQueued.keys().next().value);
-        showToast(t('liveAuditQueued'));
-      } catch { showToast(t('settingsFailed')); }
-      finally { liveFingerprint = ''; renderLive(); }
     });
     byId('filterSelect').addEventListener('change', renderCandidates);
     byId('sortSelect').addEventListener('change', renderCandidates);

@@ -85,12 +85,13 @@ test('batch queue selects the corresponding CA while preserving filters until an
   const h = harness(); h.alert([row(), row(B)]);
   assert.match(h.el('voiceSpotlight').innerHTML, /voiceSpotlightQueue/);
   h.choose(row(B)); assert.equal(h.context.rank(row(B), T), 0); assert.equal(h.context.rank(row(), T), 1);
-  h.el('liveSearch').value = 'no-match'; h.el('searchInput').value = 'no-match'; h.context.draw();
-  assert.match(h.el('voiceSpotlight').innerHTML, /voiceSpotlightFiltered/); assert.doesNotMatch(h.el('candidates').innerHTML, /voice-spotlight-row/);
+  // The radar's own search went with the radar panel; the candidates search is
+  // the filter that remains, and locate must respect it rather than reset it.
+  h.el('searchInput').value = 'no-match'; h.context.draw();
+  assert.doesNotMatch(h.el('candidates').innerHTML, /voice-spotlight-row/);
   assert.equal(h.el('searchInput').value, 'no-match');
   await h.context.locate();
   assert.equal(h.el('searchInput').value, 'no-match');
-  assert.equal(h.el('liveSearch').value, ''); assert.equal(h.el('liveSort').value, 'new');
   assert.equal(h.el('live-card-' + encodeURIComponent('bsc:' + B)).focused, true);
   h.click('copy'); assert.deepEqual(h.copied, [B]);
   h.click('dismiss'); assert.equal(h.el('voiceSpotlight').hidden, true); assert.doesNotMatch(h.el('candidates').innerHTML, /voice-spotlight-row/);
