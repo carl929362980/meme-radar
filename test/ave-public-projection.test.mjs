@@ -58,7 +58,11 @@ test('AVE live endpoint allowlists fields, keeps quote expiry and supplies the a
   assert.equal(snapshot.rows[1].stale, false, 'projection must not mutate retained data');
   assert.doesNotMatch(JSON.stringify(response), /raw-private-fixture|"raw"/);
   const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-  const elements = Object.fromEntries(['liveAuto', 'liveState', 'trackSort', 'trackMeta', 'trackState', 'trackRows']
+  const elements = Object.fromEntries(['liveAuto', 'liveState', 'trackSort', 'trackMeta', 'trackState', 'trackRows',
+    // The settled fold: the page's own renderer reaches for it, so the harness has
+    // to hold it. Without it a missing element is a crash rather than a failure to
+    // draw, and the board would test as broken for the wrong reason.
+    'trackArchive', 'trackArchiveSummary', 'trackArchiveRows']
     .map(id => [id, { value: '', textContent: '', innerHTML: '', hidden: false }]));
   const context = { Date: class extends Date { static now() { return now; } }, viewChain: 'bsc', liveData: response.body,
     lastData: { scheduler: { enabledChains: ['bsc'] } }, liveEnabled: true, serviceOnline: true,

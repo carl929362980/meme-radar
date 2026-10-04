@@ -582,6 +582,12 @@ function publicTrack(row = {}) {
     firstSeenAt: finite(row.firstSeenAt),
     lastSeenAt: finite(row.lastSeenAt),
     lastSignalAt: finite(row.lastSignalAt),
+    // Set when the card's own measurement has come back: it has already answered
+    // the question it was entered into the outcome frame to answer. The page
+    // folds these behind a heading instead of printing them in the live grid -
+    // a day-long retention otherwise leaves finished cards ranking ahead of
+    // live ones.
+    archived: row.archived === true,
     // The quadrant is a market-behaviour read, derived on projection so it
     // always reflects the latest observation rather than a stored verdict.
     quadrant: classifyTrack(row),
@@ -629,7 +635,12 @@ function publicTrackList(source) {
     // printed. This is the same read the summary makes, which is why both call the
     // one function instead of each deciding for itself what "worth showing" means.
     .filter(row => worthWatching(row))
-    .sort((a, b) => finite(b?.lastSeenAt) - finite(a?.lastSeenAt))
+    // Settled cards are sorted behind live ones before the cap is applied, so
+    // the row budget is always spent on live leads first: with a day-long
+    // retention there can be more finished cards than there are rows to send,
+    // and a plain recency sort would spend part of the budget on them.
+    .sort((a, b) => (a?.archived === true ? 1 : 0) - (b?.archived === true ? 1 : 0)
+      || finite(b?.lastSeenAt) - finite(a?.lastSeenAt))
     .slice(0, TRACK_ROWS)
     .map(publicTrack);
 }

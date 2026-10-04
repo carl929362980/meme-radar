@@ -1046,7 +1046,21 @@ export class Scanner {
       // happened to yet. `track` keeps the whole set so every lead's anchor - the
       // reading its ladder is measured from - survives a quiet cycle, and only the
       // printed board leaves the quiet ones out.
-      const board = tracking.filter(row => worthWatching(row, now));
+      // Which cards the board is finished with. A card whose measurement has
+      // come back has already answered the question it was entered for, and the
+      // board's own ranking cannot tell that apart from a live card - so with a
+      // day-long retention the finished ones would sit on the first screen in
+      // front of today's leads, ordered by how thoroughly they died.
+      //
+      // They are folded, not dropped, and the fold is counted (`quiet`, printed
+      // beside the board): a board that quietly got shorter cannot be told apart
+      // from a market that went quiet, which is the one misreading this project
+      // refuses to allow.
+      const settled = new Set(outcomes.filter(row => row.samples?.h24).map(row => addressKey(row.address)));
+      const trackingRows = settled.size
+        ? tracking.map(row => (settled.has(addressKey(row.address)) ? { ...row, archived: true } : row))
+        : tracking;
+      const board = trackingRows.filter(row => worthWatching(row, now) && !row.archived);
       // The measurement frame is the board, taken after the board is decided. A
       // card the machine showed is a claim it made, and the only way to find out
       // whether those claims are worth anything is to measure all of them -
@@ -1093,7 +1107,7 @@ export class Scanner {
         // into the measurement frame. A frame that quietly stops growing is how
         // a calibration run dies without anyone noticing.
         outcomeSummary: { ...summarizeOutcomes(outcomes), boardedFrame: boardedSampling },
-        track: tracking,
+        track: trackingRows,
         // The summary describes the board, so it is handed the board, and the
         // leads left out of it are counted rather than dropped in silence: a board
         // that shrinks quietly is indistinguishable from a market that went quiet.

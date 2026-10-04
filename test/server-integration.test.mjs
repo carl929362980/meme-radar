@@ -494,6 +494,38 @@ test('the board prints only the leads something has happened to, and reports the
   for (const row of body.track) assert.ok(['S', 'A', 'B', 'C', 'D'].includes(row.grade), 'every row is graded');
 });
 
+// A card whose own measurement has come back is no longer a question the board is
+// asking, so it is folded behind a heading instead of printed in the live grid.
+// Folding is not deleting: the row is still sent and still counted. The part that
+// actually keeps the first screen clean is the sort - settled cards go behind live
+// ones before the row budget is spent, so a day of finished measurements can never
+// crowd out a lead that is still open.
+test('a settled card is flagged and sorted behind live cards so the row budget goes to live leads', async () => {
+  const at = Date.now();
+  const record = (index, over = {}) => ({
+    chain: 'bsc', address: '0x' + String(index + 1).padStart(40, '0'), symbol: 'T' + index,
+    source: 'feed', firstSeenAt: at, lastSeenAt: at + index,
+    snapshot: { price: null, marketCap: 20_000, liquidity: 10_000, holders: 100, top10Rate: null, at },
+    latest: { price: null, marketCap: 20_000, liquidity: 10_000, holders: 200, top10Rate: null, at: at + index },
+    risk: null, reached: {},
+    signals: [{ id: 'holders:2', axis: 'holders', rung: 2, value: 2, at }],
+    ...over
+  });
+  // The settled card is deliberately the *freshest* row, so a plain recency sort
+  // would put it first and the flag would be the only thing telling them apart.
+  const stored = [record(0), record(1, { archived: true, lastSeenAt: at + 999 }), record(2)];
+  const server = createServer({ settings, supportedChains: ['sol', 'bsc'], controls: { value: {} }, state: { value: {
+    activeChain: 'bsc', status: 'RUNNING', events: [], chainStates: {}, track: stored,
+    trackSummary: { tracked: 3, active: 3, cooling: 0, atRisk: 0, exiting: 0,
+      quadrants: { POOL_PULLED: 0, DISTRIBUTION: 0, BREAKOUT: 0, WATCH: 3 }, recentSignals: [] }
+  } } });
+  const { body } = await dispatch(server, '/api/status', { method: 'GET' });
+  assert.deepEqual(body.track.map(row => row.symbol), ['T2', 'T0', 'T1']);
+  assert.equal(body.track[2].archived, true, 'the settled card is still sent, not dropped');
+  assert.equal(body.track[0].archived, false);
+  assert.equal(body.track[1].archived, false);
+});
+
 // The pre-flight verdict, projected. The verdict maths has its own suite; what is
 // under test here is the whitelist, because this is the only place a new field
 // can silently reach the page.
