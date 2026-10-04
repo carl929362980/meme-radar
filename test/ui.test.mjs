@@ -90,10 +90,16 @@ test('缺失到期时间的行情行仍然进入看板，缺失不是过期', ()
   assert.equal(kept.includes(context.liveData.rows[3].address), false, 'a reading older than a minute is still stale');
 });
 
-test('performance and event panels are removed together with their render hooks; scan status and voice remain', () => {
-  assert.doesNotMatch(html, /data-i18n="(?:outcomeTitle|eventsTitle)"/);
-  assert.doesNotMatch(html, /id="(?:outcome[^\"]*|events|cycle|requestSummary|eventHistory[^\"]*)"/);
-  assert.doesNotMatch(html, /\b(?:eventOverview|renderEvents|renderOutcomes)\s*\(/);
+test('the event panel stays removed with its hook; the outcome panel, scan status and voice remain', () => {
+  // The event history panel stayed deleted: its title, ids and hook must not
+  // reappear. The outcome (post-screen performance) panel is back on purpose -
+  // it is the C8 read-back view wired to outcomeSummary, so it must exist.
+  assert.doesNotMatch(html, /data-i18n="eventsTitle"/);
+  assert.doesNotMatch(html, /id="(?:events|cycle|requestSummary|eventHistory[^\"]*)"/);
+  assert.doesNotMatch(html, /\b(?:eventOverview|renderEvents)\s*\(/);
+  assert.match(html, /data-i18n="outcomeTitle"/);
+  assert.match(html, /id="outcomePanel"/);
+  assert.match(html, /renderOutcome\s*\(/);
   // The candidate radar is not a panel of its own any more: its rows are handed
   // to the board's renderer, so the page carries exactly one board section.
   assert.match(html, /id="trackPanel"/);

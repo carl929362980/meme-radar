@@ -581,6 +581,25 @@
       unicode-bidi: isolate;
     }
     .manage-panel summary { padding: 16px; cursor: pointer; color: #cde2df; font-weight: 600; }
+    /* C1 结论层：首屏置顶指针。左竖条用 cyan 表示结构色/指针，不表示好坏。 */
+    .verdict-panel { margin: 0 0 16px; border: 1px solid #2a4450; background: #0e1b20; }
+    .verdict-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 14px 18px 2px; }
+    .verdict-head h2 { margin: 0; font-size: 18px; color: #cde2df; }
+    .verdict-head .muted { font-size: 14px; }
+    .verdict-list { list-style: none; margin: 0; padding: 8px 12px 4px; display: grid; gap: 4px; }
+    .verdict-row { display: flex; align-items: center; gap: 10px; padding: 8px 8px; border-left: 3px solid #5ce5f2; border-radius: 6px; background: #0d171c; cursor: pointer; }
+    .verdict-row:hover, .verdict-row:focus-visible { background: #132128; outline: none; }
+    .verdict-row .vrank { width: 20px; text-align: center; color: #668ba2; font-weight: 700; }
+    .verdict-row .vsym { font-weight: 700; color: #eef8f5; white-space: nowrap; }
+    .verdict-row .vreason { color: #aebfc6; flex: 1; min-width: 0; }
+    .verdict-row .vgo { color: #668ba2; }
+    .verdict-tail { padding: 4px 18px 12px; color: #93a9b6; font-size: 14px; }
+    /* C8 复盘：T+30m/1h/2h/24h 表现，页脚无地址表格面板。 */
+    .outcome-panel { margin: 16px 0; }
+    .outcome-body { padding: 0 18px 6px; display: grid; gap: 6px; }
+    .outcome-row { display: flex; justify-content: space-between; gap: 12px; padding: 8px 12px; background: #0d171c; border: 1px solid #22353f; border-radius: 8px; font-size: 14px; color: #cde2df; }
+    .outcome-row .mono { color: #eef8f5; }
+    .outcome-note { padding: 0 18px 14px; color: #93a9b6; font-size: 14px; }
     .live-panel { margin: 16px 0; border-color: #36515d; background: linear-gradient(120deg, #10202a, #0b151a); }
     .live-heading, .live-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 16px 18px; }
     .live-heading h2 { margin: 0; font-size: 20px; }
@@ -814,6 +833,15 @@
     </section>
 
 
+    <section id="verdictBar" class="panel verdict-panel" aria-labelledby="verdictTitle" hidden>
+      <div class="verdict-head">
+        <h2 id="verdictTitle" data-i18n="verdictTitle">今天该看的</h2>
+        <span class="muted" id="verdictHint"></span>
+      </div>
+      <ol class="verdict-list" id="verdictList"></ol>
+      <div class="verdict-tail" id="verdictTail"></div>
+    </section>
+
     <section id="trackPanel" class="panel live-panel" aria-labelledby="trackTitle">
       <div class="live-heading">
         <div><h2 id="trackTitle" data-i18n="boardTitle">聪明钱 · 追踪</h2><small data-i18n="boardDisclaimer">钱包在动 + 池子在变 · 首见对比</small></div>
@@ -837,6 +865,14 @@
         <summary id="trackArchiveSummary" class="track-archive-summary"></summary>
         <div id="trackArchiveRows" class="live-grid"></div>
       </details>
+    </section>
+
+    <section id="outcomePanel" class="panel outcome-panel" aria-labelledby="outcomeTitle" hidden>
+      <div class="live-heading">
+        <div><h2 id="outcomeTitle" data-i18n="outcomeTitle">筛选后表现验证</h2><small data-i18n="shadowDisclaimer">影子观察，不代表可成交收益，也不作为交易指令</small></div>
+      </div>
+      <div class="outcome-body" id="outcomeBody"></div>
+      <div class="outcome-note" id="outcomeNote"></div>
     </section>
 
     <section class="panel voice-panel" aria-label="Voice alerts">
@@ -1256,6 +1292,16 @@
       last30mLocal: ['近30分钟/本机', '近30分鐘/本機', '30 min / local', '30分/ローカル', '30분/로컬', '30 دقيقة / محلي'],
       localOnlyNoTrade: ['仅本浏览器标记，不会下单', '僅本瀏覽器標記，不會下單', 'Browser-only mark; no order', 'このブラウザのみ・注文なし', '현재 브라우저에만 저장·주문 없음', 'علامة في هذا المتصفح فقط؛ لا أوامر'],
       outcomeTitle: ['筛选后表现验证', '篩選後表現驗證', 'Post-screen performance', '選別後パフォーマンス', '필터링 후 성과 검증', 'أداء ما بعد الفرز'],
+      // C1 结论层：首屏置顶指针，≤5 行，每行一句可核理由。
+      verdictTitle: ['今天该看的', '今天該看的', 'Worth watching today', '今日見るべき', '오늘 볼 만한', 'يستحق المتابعة اليوم'],
+      verdictEmpty: ['今天没有能下手的（{n} / 上限 5）', '今天沒有能下手的（{n} / 上限 5）', 'Nothing to act on today ({n} / max 5)', '今日は動ける対象なし（{n} / 上限 5）', '오늘 손댈 대상 없음（{n} / 최대 5）', 'لا شيء يمكن التصرف به اليوم ({n} / حد أقصى 5)'],
+      verdictHint: ['理由里的每个数字都能在下方卡片上指到', '理由裡的每個數字都能在下方卡片上指到', 'Every number in a reason points to its card below', '理由の各数字は下のカードで指し示せます', '이유의 각 숫자는 아래 카드에서 확인할 수 있습니다', 'كل رقم في السبب يشير إلى بطاقته أدناه'],
+      verdictColdTail: ['第一轮的发现会在下一次扫描后出现。这是冷启动，不是故障。', '第一輪的發現會在下一次掃描後出現。這是冷啟動，不是故障。', 'The first findings appear after the next scan. This is a cold start, not a fault.', '最初の検出は次回スキャン後に現れます。これはコールドスタートであり、故障ではありません。', '첫 발견은 다음 스캔 후에 나타납니다. 이는 콜드 스타트이며 오류가 아닙니다.', 'ستظهر النتائج الأولى بعد المسح التالي. هذه بداية باردة وليست عطلًا.'],
+      verdictEmptyTail: ['不用老池或热榜补位。', '不用老池或熱榜補位。', 'Old pools and hot lists are not used to pad the board.', '古いプールや人気ランキングで穴埋めはしません。', '오래된 풀·인기 목록으로 채우지 않습니다.', 'لا تُستخدم التجمعات القديمة أو القوائم الرائجة لملء اللوحة.'],
+      verdictTail: ['另有 {n} 个达到门槛未列入，见下方网格', '另有 {n} 個達到門檻未列入，見下方網格', '{n} more met the bar and are not listed; see the grid below', '基準を満たすが未掲載がさらに {n} 件、下のグリッドを参照', '기준 충족했으나 미기재 {n}개, 아래 그리드 참조', '{n} إضافية استوفت الحد ولم تُدرج؛ انظر الشبكة أدناه'],
+      // C8 复盘：T+30m/1h/2h/24h 表现。
+      outcomeRow: ['{window}：完成 {n} 样本 · 平均 {ret}', '{window}：完成 {n} 樣本 · 平均 {ret}', '{window}: {n} samples · avg {ret}', '{window}：{n} 件完了 · 平均 {ret}', '{window}: {n}개 표본 · 평균 {ret}', '{window}: {n} عينة · متوسط {ret}'],
+      outcomeNotReady: ['样本不足，尚不能评价', '樣本不足，尚不能評價', 'Not enough samples to judge yet', 'サンプル不足のため、まだ評価できません', '표본 부족으로 아직 평가 불가', 'العينات غير كافية للحكم بعد'],
       shadowDisclaimer: ['影子观察，不代表可成交收益，也不作为交易指令', '影子觀察，不代表可成交收益，也不作為交易指令', 'Shadow tracking only; not executable return or a trade instruction', '影子追跡のみ。約定可能な収益や取引指示ではありません', '영자 관찰용이며 실제 수익·거래 지시가 아닙니다', 'تتبع ظلي فقط؛ لا يمثل عائدًا قابلًا للتنفيذ أو أمر تداول'],
       trackedSamples: ['跟踪样本', '追蹤樣本', 'Tracked samples', '追跡サンプル', '추적 표본', 'العينات المتتبعة'],
       historicalObservations: ['历史候选观察数', '歷史候選觀察數', 'Historical candidate observations', '過去の候補観測数', '역사적 후보 관찰 수', 'عدد مراقبات المرشحين'],
@@ -3012,7 +3058,7 @@
         // separate radar row that no longer exists.
         const cardKey = String((row ? row.chain : wallet.chain) || '') + ':' + addressIdentity((row ? row.address : wallet.address) || '');
         const spotlighted = Boolean(voiceSpotlight) && voiceSpotlightSelected === cardKey;
-        return '<article' + (spotlighted ? ' id="live-card-' + encodeURIComponent(voiceSpotlightSelected) + '" tabindex="-1"' : '')
+        return '<article data-card-key="' + escapeHtml(cardKey) + '"' + (spotlighted ? ' id="live-card-' + encodeURIComponent(voiceSpotlightSelected) + '" tabindex="-1"' : '')
           + ' class="track-card' + (risk ? ' risk' : '') + (spotlighted ? ' voice-highlight' : '') + '">'
           + '<div class="track-card-head"><strong>' + escapeHtml((row ? row.symbol : wallet.symbol) || '?') + '</strong><span>'
           + gradeBadge + ' '
@@ -3041,6 +3087,72 @@
       // showed, so they are not deleted - they are moved behind a heading, which
       // is the difference between a board that stays about today and a board
       // whose first screen is yesterday's pools ranked by how far they fell.
+      // C1 结论层：同一网格的置顶指针。挑出"值得下手"的前几个（S/A，或有钱包正在买入的 B），
+      // 每行一句可核理由。这不是第二块板——每行只指向一张卡，点击滚动过去，不复制卡片。
+      const verdictCards = cards.filter(function (card) {
+        const grade = trackGradeOf(card);
+        return grade === 'S' || grade === 'A' || (grade === 'B' && card.wallet && card.wallet.kind === 'ENTRY');
+      }).sort(function (a, b) {
+        return TRACK_GRADE_ORDER[trackGradeOf(a)] - TRACK_GRADE_ORDER[trackGradeOf(b)]
+          || number(b.wallet && b.wallet.wallets) - number(a.wallet && a.wallet.wallets)
+          || number(b.wallet && b.wallet.amountUsd) - number(a.wallet && a.wallet.amountUsd);
+      }).slice(0, 5);
+      // One reason, in words. A wallet entry names the money; otherwise the
+      // strongest crossed rung is named; a bare breakout is the last fallback.
+      const verdictReason = function (card) {
+        const wallet = card.wallet;
+        if (wallet && wallet.kind === 'ENTRY' && number(wallet.wallets) > 0) {
+          return t('signalWalletCount', { n: formatCount(wallet.wallets) })
+            + (number(wallet.amountUsd) > 0 ? ' · ' + t('boardMoneyTotal', { amount: formatMoney(wallet.amountUsd) }) : '');
+        }
+        const row = card.row;
+        const signals = row && Array.isArray(row.signals) ? row.signals : [];
+        // 优先用钱包事件（flow）作理由：S/A 级的依据就是钱包同向买入，一个
+        // 先到的筹码轴读数不该抢在它前面——那会说出"筹码在散"而不是"钱包在买"。
+        const flowSignal = signals.find(function (s) { return s.axis === 'flow'; });
+        const s = flowSignal || signals[0];
+        if (s) {
+          if (s.axis === 'flow') return t(s.kind === 'EXIT' ? 'trackFlowExitTag' : 'trackFlowEntryTag');
+          const key = { price: 'trackSignalPrice', marketCap: 'trackSignalMarketCap', liquidity: 'trackSignalLiquidity',
+            holders: 'trackSignalHolders', top10: 'trackSignalTop10' }[s.axis];
+          const v = number(s.rung);
+          const level = s.axis === 'price' || s.axis === 'holders' ? multiple(v)
+            : s.axis === 'marketCap' ? money(v)
+              : s.axis === 'liquidity' ? formatSignedPercent(v)
+                : s.axis === 'top10' ? points(v) : String(v);
+          return key ? t(key, { v: level }) : String(v);
+        }
+        const quadrant = row && row.quadrant;
+        if (quadrant === 'BREAKOUT') return t('trackTagBreakout');
+        if (quadrant === 'DISTRIBUTION') return t('trackTagDistribution');
+        return '';
+      };
+      const verdictBar = byId('verdictBar');
+      verdictBar.hidden = false;
+      byId('verdictTitle').textContent = verdictCards.length
+        ? t('verdictTitle')
+        : t('verdictEmpty', { n: 0 });
+      byId('verdictHint').textContent = t('verdictHint');
+      byId('verdictList').innerHTML = verdictCards.length ? verdictCards.map(function (card, index) {
+        const row = card.row, wallet = card.wallet;
+        const grade = trackGradeOf(card);
+        const quadrant = row ? row.quadrant : (wallet.kind === 'EXIT' ? 'DISTRIBUTION' : 'BREAKOUT');
+        const cardKey = String((row ? row.chain : wallet.chain) || '') + ':' + addressIdentity((row ? row.address : wallet.address) || '');
+        const tag = row ? (TRACK_TAG[quadrant] || 'trackTagWatch') : (wallet.kind === 'EXIT' ? 'signalKindExit' : 'signalKindEntry');
+        return '<li class="verdict-row" data-target="' + escapeHtml(cardKey) + '" tabindex="0" role="link"'
+          + ' aria-label="' + escapeHtml(t('verdictTitle')) + ': ' + escapeHtml((row ? row.symbol : wallet.symbol) || '?') + '">'
+          + '<span class="vrank mono">' + (index + 1) + '</span>'
+          + '<span class="vsym">' + escapeHtml((row ? row.symbol : wallet.symbol) || '?') + '</span>'
+          + '<span class="live-tag track-grade ' + (TRACK_GRADE_CLASS[grade] || 'track-grade-d') + '">' + escapeHtml(grade) + '</span>'
+          + '<span class="live-tag ' + (TRACK_CLASS[quadrant] || 'track-tag-watch') + '">' + escapeHtml(t(tag)) + '</span>'
+          + '<span class="vreason">' + escapeHtml(verdictReason(card)) + '</span>'
+          + '<span class="vgo">→</span>'
+          + '</li>';
+      }).join('') : '';
+      byId('verdictTail').textContent = verdictCards.length
+        ? t('verdictTail', { n: formatCount(cards.length - verdictCards.length) })
+        : t('verdictEmptyTail');
+
       const settledCards = cards.filter(function (card) { return Boolean(card.row && card.row.archived); });
       const liveCards = cards.filter(function (card) { return !(card.row && card.row.archived); });
       const cardHtml = liveCards.map(renderCard).join('');
@@ -3086,6 +3198,29 @@
         byId('trackArchiveSummary').textContent = t('boardSettled', { n: formatCount(settledCards.length) });
         byId('trackArchiveRows').innerHTML = settledHtml;
       }
+    }
+
+    // C8 复盘：T+30m/1h/2h/24h 的表现。样本不足时诚实显示"尚不能评价"，
+    // 不许用老数据补位、不许把缺失当负收益——缺失读作"暂无"，绝不折算。
+    function renderOutcome(data) {
+      const os = data && data.outcomeSummary || {};
+      const windows = [
+        { key: 'result30m', done: 'completed30m', ret: 'averageReturn30m' },
+        { key: 'result1h', done: 'completed1h', ret: 'averageReturn1h' },
+        { key: 'result2h', done: 'completed2h', ret: 'averageReturn2h' },
+        { key: 'result24h', done: 'completed24h', ret: 'averageReturn24h' }
+      ];
+      const anySample = windows.some(function (w) { return number(os[w.done]) > 0; });
+      byId('outcomePanel').hidden = false;
+      byId('outcomeBody').innerHTML = anySample
+        ? windows.map(function (w) {
+          const ret = hasFiniteValue(os[w.ret]) ? formatSignedPercent(os[w.ret]) : t('none');
+          return '<div class="outcome-row"><span>' + escapeHtml(t('outcomeRow', {
+            window: t(w.key), n: formatCount(os[w.done]), ret: ret
+          })) + '</span></div>';
+        }).join('')
+        : '<div class="outcome-row"><span>' + escapeHtml(t('outcomeNotReady')) + '</span></div>';
+      byId('outcomeNote').textContent = t('sampleGate');
     }
 
     // The signal stream answers "who is moving together", so a card leads with
@@ -3247,6 +3382,7 @@
       renderTelemetry();
       renderLive();
       renderTrack();
+      renderOutcome(data);
       if (shouldRenderCandidates) renderCandidates();
       else renderVoiceSpotlight();
     }
@@ -3404,6 +3540,21 @@
     attachVoiceSpotlight();
     byId('searchInput').addEventListener('input', renderCandidates);
     byId('trackSort').addEventListener('change', function () { trackFingerprint = ''; renderTrack(); });
+    // C1 结论层是置顶指针：点击一行滚动到同一网格里那张卡，不打开新面板。
+    const scrollToVerdict = function (row) {
+      if (!row) return;
+      const target = row.getAttribute('data-target');
+      const card = target ? document.querySelector('[data-card-key="' + target + '"]') : null;
+      if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+    byId('verdictList').addEventListener('click', function (event) {
+      scrollToVerdict(event.target && event.target.closest ? event.target.closest('.verdict-row') : null);
+    });
+    byId('verdictList').addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      scrollToVerdict(event.target && event.target.closest ? event.target.closest('.verdict-row') : null);
+    });
     byId('liveAuto').addEventListener('change', function (event) {
       liveEnabled = event.target.checked; writeStorage('memeRadarLiveEnabledV1', liveEnabled); refreshLive();
     });
