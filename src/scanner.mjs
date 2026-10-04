@@ -443,11 +443,18 @@ export class Scanner {
     // both discovery-feed rows and market rows needs both lanes or one half of
     // it silently stops being measurable. The AVE lane goes away with AVE; a
     // lane whose client cannot answer is dropped rather than run.
+    // Named after what it really is, which is the whole point of the lane: a
+    // baseline may only be measured by the provider that priced it. When no
+    // separate outcome client exists, the primary lane is the market client and
+    // must carry the market provider's name - calling GMGN-baseline rows with
+    // AVE's candles would publish the gap between two rulers as a market move.
+    const marketName = typeof provider?.snapshot === 'function' ? String(provider.snapshot()?.provider || '') : '';
+    const distinctClient = this.outcomeProvider !== provider;
+    const primaryName = distinctClient ? outcomeProviderName : (marketName || outcomeProviderName);
     this.outcomeLanes = [
-      { name: outcomeProviderName, client: this.outcomeProvider },
-      { name: 'AVE', client: provider }
-    ].filter((lane, index, list) => lane.client && typeof lane.client.priceAt === 'function'
-      && list.findIndex(other => other.client === lane.client) === index);
+      { name: primaryName, client: this.outcomeProvider },
+      ...(distinctClient && marketName && typeof provider?.priceAt === 'function' ? [{ name: marketName, client: provider }] : [])
+    ].filter(lane => lane.name && lane.client && typeof lane.client.priceAt === 'function');
     this.cycleController = null;
     this.secondary = secondary;
     // Optional tracking enrichment. Never required: a null reader simply means
