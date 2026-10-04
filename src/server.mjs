@@ -865,6 +865,17 @@ function publicOutcomeSummary(source = {}) {
     averageReturn2h: finiteOrNull(source.averageReturn2h),
     averageReturn24h: finiteOrNull(source.averageReturn24h),
     note: text(source.note, 160)
+    // How much of the board the measurement frame actually took this cycle, and
+    // why it did not take the rest. Same reason every other count on this page
+    // is printed: a frame that stopped growing silently is indistinguishable
+    // from a market that stopped producing anything worth measuring.
+    ,boardedFrame: {
+      boarded: finite(source.boardedFrame?.boarded),
+      created: finite(source.boardedFrame?.created),
+      noPrice: finite(source.boardedFrame?.noPrice),
+      unnamed: finite(source.boardedFrame?.unnamed),
+      priceRequests: finite(source.boardedFrame?.priceRequests)
+    }
     ,coverage: Object.fromEntries(['passed', 'rejected'].map(cohort => [cohort,
       Object.fromEntries(['m5','m15','m30','h1','h2','h6','h24'].map(key => {
         const row = source.coverage?.[cohort]?.[key] || {};
