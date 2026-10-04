@@ -105,7 +105,14 @@ test('the boarded sampling frame measures every card the board printed', () => {
   ];
   const outcomes = [];
   const report = sampleBoarded(outcomes, board, AT, { providers: { feed: 'GMGN' } });
-  assert.deepEqual(report, { created: 2, boarded: 3 });
+  assert.equal(report.created, 2);
+  assert.equal(report.boarded, 3);
+  // The one it could not take is reported, and handed back by address so the
+  // caller can go and get the missing reading instead of waiting for a rotation.
+  // A `continue` with no count is how "the table is empty" hides.
+  assert.equal(report.noPrice, 1);
+  assert.deepEqual(report.awaiting, [ca(3)]);
+  assert.equal(report.unnamed, 0);
   assert.equal(outcomes.length, 2);
   // The cohort key the coverage table already counts, so these rows land in
   // `passed` instead of sitting in a cohort nobody reads.
@@ -115,7 +122,8 @@ test('the boarded sampling frame measures every card the board printed', () => {
   assert.equal(outcomes[0].baselineAt, AT - 600_000);
   // Idempotent: a second pass over the same board adds nothing, and does not
   // re-stamp an existing baseline.
-  assert.deepEqual(sampleBoarded(outcomes, board, AT, { providers: { feed: 'GMGN' } }), { created: 0, boarded: 3 });
+  const second = sampleBoarded(outcomes, board, AT, { providers: { feed: 'GMGN' } });
+  assert.equal(second.created, 0);
   assert.equal(outcomes.length, 2);
 });
 
@@ -125,16 +133,21 @@ test('a boarded row whose price came from a source nobody named is not measured'
   const board = [{ chain: 'sol', address: '7U62Lm4CKa25eRdBdYv3QeTJjJirxTVGJpA3ePkkpump', symbol: 'X',
     source: 'feed', firstSeenAt: AT, snapshot: { at: AT, price: 1 } }];
   const outcomes = [];
-  assert.deepEqual(sampleBoarded(outcomes, board, AT, { providers: {} }), { created: 0, boarded: 1 });
+  const unnamedReport = sampleBoarded(outcomes, board, AT, { providers: {} });
+  assert.equal(unnamedReport.created, 0);
+  assert.equal(unnamedReport.unnamed, 1, 'no ruler named means no baseline, and it says so');
   assert.equal(outcomes.length, 0);
   // An address this build cannot normalise is never keyed loosely.
   assert.deepEqual(sampleBoarded(outcomes, [{ chain: 'bsc', address: 'nope', source: 'feed',
-    firstSeenAt: AT, snapshot: { at: AT, price: 1 } }], AT, { providers: { feed: 'GMGN' } }), { created: 0, boarded: 0 });
+    firstSeenAt: AT, snapshot: { at: AT, price: 1 } }], AT, { providers: { feed: 'GMGN' } }),
+  { created: 0, boarded: 0, noPrice: 0, unnamed: 0, awaiting: [] });
   // And the frame is bounded, so a board that grows cannot grow the state file
   // without limit.
   const many = Array.from({ length: 10 }, (_, i) => ({ chain: 'bsc', address: ca(i + 1), source: 'feed',
     firstSeenAt: AT, snapshot: { at: AT, price: 1 } }));
-  assert.deepEqual(sampleBoarded([], many, AT, { providers: { feed: 'GMGN' }, limit: 4 }), { created: 4, boarded: 10 });
+  const capped = sampleBoarded([], many, AT, { providers: { feed: 'GMGN' }, limit: 4 });
+  assert.equal(capped.created, 4);
+  assert.equal(capped.boarded, 10);
 });
 
 test('passive observations remain free but never mix legacy and AVE baselines', () => {

@@ -672,6 +672,12 @@ function publicTrackSummary(source = {}, rows = null) {
     // quiet market - and it is likewise handed in by whatever left them out,
     // because by construction they are not in `track` for it to count.
     quiet: finite(source.quiet),
+    // Leads the board is showing that the outcome frame cannot measure yet, and
+    // how many price reads were requested for them. Reported for the same reason
+    // the quiet count is: a frame that stopped growing silently is
+    // indistinguishable from a market that stopped producing.
+    unpriced: finite(source.unpriced),
+    priceRequests: finite(source.priceRequests),
     quadrants: {
       POOL_PULLED: finite(quadrants.POOL_PULLED),
       DISTRIBUTION: finite(quadrants.DISTRIBUTION),

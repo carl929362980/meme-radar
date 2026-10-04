@@ -552,7 +552,7 @@ export function observeTracks(records, observations, now = Date.now(),
 
 const QUADRANTS = Object.freeze(['POOL_PULLED', 'DISTRIBUTION', 'BREAKOUT', 'WATCH']);
 
-export function summarizeTracking(records, now = Date.now(), { coolingMs = 30 * 60_000, vetoed = 0, quiet = 0 } = {}) {
+export function summarizeTracking(records, now = Date.now(), { coolingMs = 30 * 60_000, vetoed = 0, quiet = 0, unpriced = 0, priceRequests = 0 } = {}) {
   const rows = Array.isArray(records) ? records : [];
   const quadrants = Object.fromEntries(QUADRANTS.map(name => [name, 0]));
   // The grade distribution, tallied over the same rows as the quadrants and kept
@@ -600,5 +600,16 @@ export function summarizeTracking(records, now = Date.now(), { coolingMs = 30 * 
     // optional: a board that shrinks in silence is indistinguishable from a quiet
     // market, which is the failure every neighbouring default here was caught in.
     quiet: Math.max(0, Number(quiet) || 0),
+    // A fifth count, and the one that used to be invisible: cards the board is
+    // showing that the outcome frame cannot hold because there is no price to
+    // measure them from. Not a verdict, not a veto, not quiet - these leads are
+    // on the board and unmeasurable, which is a different failure from any of
+    // the four above and must not be reported as one of them. Handed in by the
+    // sampler that could not take them.
+    unpriced: Math.max(0, Number(unpriced) || 0),
+    // How many of those the feed was asked to go and price. Zero next to a
+    // non-zero `unpriced` means the request never reached the discovery feed -
+    // a disabled provider or a full queue - and that is worth seeing too.
+    priceRequests: Math.max(0, Number(priceRequests) || 0),
     quadrants, grades, recentSignals: signals };
 }

@@ -438,6 +438,16 @@ export class Scanner {
     this.provider = provider;
     this.outcomeProvider = outcomeProvider || feed?.client || provider;
     this.outcomeProviderName = outcomeProviderName;
+    // One read-back lane per provider that can answer for a baseline. A row may
+    // only ever be measured by the provider that priced it, so a board carrying
+    // both discovery-feed rows and market rows needs both lanes or one half of
+    // it silently stops being measurable. The AVE lane goes away with AVE; a
+    // lane whose client cannot answer is dropped rather than run.
+    this.outcomeLanes = [
+      { name: outcomeProviderName, client: this.outcomeProvider },
+      { name: 'AVE', client: provider }
+    ].filter((lane, index, list) => lane.client && typeof lane.client.priceAt === 'function'
+      && list.findIndex(other => other.client === lane.client) === index);
     this.cycleController = null;
     this.secondary = secondary;
     // Optional tracking enrichment. Never required: a null reader simply means
@@ -974,20 +984,27 @@ export class Scanner {
       }
 
       const outcomeScopes = { ...Object.fromEntries(Object.entries(prior.chainStates || {}).map(([id, scope]) => [id, scope.outcomes || []])), [chain]: outcomes };
-      const sampleJobs = selectOutcomeJobs(outcomeScopes, { enabledChains: this.controls?.value.enabledChains || [chain],
-        provider: this.outcomeProviderName, limit: settings.outcomeReadsPerCycle, now: Date.now() });
-      for (const job of sampleJobs) {
-        if (controller.signal.aborted || Date.now() >= startedAt + (settings.auditCycleBudgetMs || 80_000) + 25_000) break;
-        if (!(this.controls?.value.enabledChains || [chain]).includes(job.chain)) continue;
-        // Read-back is its own lane: it is shaped by the outcome client's own
-        // pacing (`nextAllowedAt`) and by this cycle's read ceiling, not by the
-        // audit client's budget lanes - a backlog of yesterday's rows must never
-        // be able to stall discovery, and a paused audit must not stop a
-        // measurement that costs nothing to make.
-        if (this.outcomeProvider.cooling?.() || this.outcomeProvider.nextAllowedAt > Date.now()) break;
-        await collectOutcomeSamples([job.row], this.outcomeProvider, job.chain, { limit: 1, onlyKey: job.key, signal: controller.signal,
-          providerName: this.outcomeProviderName,
-          deadline: startedAt + (settings.auditCycleBudgetMs || 80_000) + 25_000 });
+      for (const lane of this.outcomeLanes) {
+        // Only the provider named on a row may answer for it, so each lane
+        // selects its own rows. A lane whose provider is paused or cooling is
+        // skipped as a whole: spending one row's retry on a provider that cannot
+        // answer at all would burn the row's three attempts on nothing.
+        if (lane.client.disabled || lane.client.nextAllowedAt > Date.now()) continue;
+        const sampleJobs = selectOutcomeJobs(outcomeScopes, { enabledChains: this.controls?.value.enabledChains || [chain],
+          provider: lane.name, limit: settings.outcomeReadsPerCycle, now: Date.now() });
+        for (const job of sampleJobs) {
+          if (controller.signal.aborted || Date.now() >= startedAt + (settings.auditCycleBudgetMs || 80_000) + 25_000) break;
+          if (!(this.controls?.value.enabledChains || [chain]).includes(job.chain)) continue;
+          // Read-back is its own lane: it is shaped by the outcome client's own
+          // pacing (`nextAllowedAt`) and by this cycle's read ceiling, not by the
+          // audit client's budget lanes - a backlog of yesterday's rows must
+          // never be able to stall discovery, and a paused audit must not stop a
+          // measurement that costs nothing to make.
+          if (lane.client.cooling?.() || lane.client.nextAllowedAt > Date.now()) break;
+          await collectOutcomeSamples([job.row], lane.client, job.chain, { limit: 1, onlyKey: job.key, signal: controller.signal,
+            providerName: lane.name,
+            deadline: startedAt + (settings.auditCycleBudgetMs || 80_000) + 25_000 });
+        }
       }
       for (const [id, rows] of Object.entries(outcomeScopes)) {
         if (id !== chain && prior.chainStates?.[id]) prior.chainStates[id].outcomeSummary = summarizeOutcomes(rows);
@@ -1074,6 +1091,18 @@ export class Scanner {
       const boardedSampling = sampleBoarded(outcomes, board, now, {
         providers: { feed: 'GMGN', market: this.provider.snapshot?.().provider || null }
       });
+      // A card the board printed with no price is a card the frame cannot hold,
+      // and waiting for the feed's newest-first rotation to reach it is waiting
+      // for a queue that is ~40 pools a minute deep against 6 reads a poll. So
+      // the ones that are actually on the board ask for their price directly:
+      // one read each, ahead of the rotation.
+      //
+      // This is also what stops the gap from being silent. `noPrice` is reported
+      // either way, and a machine that could not measure anything now says so on
+      // the board instead of merely producing an empty table.
+      const priceRequests = boardedSampling.awaiting.length && typeof this.feed?.requestPrices === 'function'
+        ? this.feed.requestPrices(chain, boardedSampling.awaiting) : 0;
+      boardedSampling.priceRequests = priceRequests;
       const next = {
         ...prior,
         version: 2,
@@ -1112,7 +1141,13 @@ export class Scanner {
         // leads left out of it are counted rather than dropped in silence: a board
         // that shrinks quietly is indistinguishable from a market that went quiet.
         trackSummary: summarizeTracking(board, now, { coolingMs: settings.trackCoolingMs,
-          vetoed: trackStats.vetoed, quiet: tracking.length - board.length }),
+          vetoed: trackStats.vetoed, quiet: tracking.length - board.length,
+          // Cards the board printed that the measurement frame could not hold
+          // because there is no price to measure from. Printed beside the veto
+          // and quiet counts for the same reason they are: a frame that silently
+          // stopped growing is indistinguishable from a market that stopped
+          // producing anything worth measuring.
+          unpriced: boardedSampling.noPrice, priceRequests: boardedSampling.priceRequests }),
         sourceHealth: { discovery: discoveryHealth, lastAudit: lastAuditHealth, lastSecondary: lastSecondaryHealth,
           // Reported so a throttled enrichment is visible instead of silently
           // producing cards with fewer axes. Optional: absent when disabled.

@@ -68,6 +68,20 @@ const TICK_MS = 5_000;
 // roughly three reads a minute - a rounding error against the 20/s bucket.
 export const PRICE_ENRICH_PER_POLL = 6;
 export const PRICE_ENRICH_GAP_MS = 4 * 60_000;
+// The queue above it. Six reads per poll is a rounding error against the bucket
+// but a rounding error against the arrival rate too: measured ~40 new pools a
+// minute against 6 reads every ~90-120 s, so under the newest-first rule alone
+// ~99% of pools never get a price at all - and a pool with no price cannot be
+// entered into the outcome frame, which is how "the table is empty" survived
+// every other fix.
+//
+// So the board may *ask* for a price. A card that reached the board without one
+// is exactly the card that needs to be measured, and it needs precisely one
+// read - not a place in a rotation. These are drained ahead of the rotation,
+// capped per poll, and the queue itself is capped so a board that grows cannot
+// grow the queue without bound.
+export const PRICE_QUEUE_PER_POLL = 12;
+export const PRICE_QUEUE_MAX = 400;
 // A cluster may only re-announce itself when it has actually grown, or when this
 // much time has passed. Without the second clause a cluster that stays at three
 // wallets would fall silent, which is how a real accumulation gets missed.
@@ -252,7 +266,12 @@ export class GmgnDiscovery {
         status: 'WAITING', code: null, lastSuccessAt: 0, lastAttemptAt: 0,
         pollCount: 0, nextPoolAt: 0, nextTradeAt: 0,
         announced: new Map(),
-        counts: { newPool: 0, entry: 0, exit: 0, priceReads: 0 }
+        // Addresses the board asked for a price on, oldest request first. A
+        // request is not a promise: the pool may already be gone, the read may
+        // fail, and either way nothing is invented. It is a priority, and the
+        // count of what it could not serve is reported rather than swallowed.
+        priceQueue: [],
+        counts: { newPool: 0, entry: 0, exit: 0, priceReads: 0, priceQueueSkipped: 0 }
       };
       this.states.set(chain, state);
     }
@@ -407,15 +426,53 @@ export class GmgnDiscovery {
   // stamped. The prioritisation is the product's own: a lead the pre-flight
   // verdict has turned away gets no budget, and among the rest the newest lead
   // wins - the pool in its first minutes is the one this tool exists to see.
+  // The board asking for a price. Called with the addresses of cards that
+  // reached the board without one: those are the cards the outcome frame needs a
+  // baseline for, and one read each is enough. Returns how many were accepted,
+  // which is deliberately not how many will be served - a request for a pool
+  // this feed no longer holds is dropped on the next drain and counted there.
+  requestPrices(chain, addresses) {
+    const state = this.#state(chain);
+    if (!state.priceQueue) state.priceQueue = [];
+    const held = new Set(state.priceQueue);
+    let accepted = 0;
+    for (const address of Array.isArray(addresses) ? addresses : []) {
+      const key = typeof address === 'string' ? address.trim() : '';
+      if (!key || held.has(key)) continue;
+      if (state.priceQueue.length >= PRICE_QUEUE_MAX) break;
+      held.add(key);
+      state.priceQueue.push(key);
+      accepted++;
+    }
+    return accepted;
+  }
+
   async #enrichPrices(chain, state) {
     if (!this.enabled || typeof this.client?.tokenInfo !== 'function') return;
     const at = this.now();
-    const candidates = [...state.pools.values()]
+    // The queue first. A card that reached the board is a claim this machine
+    // made, and the measurement frame cannot hold it without a price; the
+    // newest-first rotation below would otherwise get to it after the pool has
+    // aged out of this feed's own 30-minute window.
+    const queued = [];
+    const stillWaiting = [];
+    for (const address of state.priceQueue || []) {
+      if (queued.length >= PRICE_QUEUE_PER_POLL) { stillWaiting.push(address); continue; }
+      const pool = state.pools.get(address);
+      // Gone from the feed, or priced since it was asked for: either way the
+      // request is over, and it is counted rather than silently dropped.
+      if (!pool) { state.counts.priceQueueSkipped++; continue; }
+      if (Number.isFinite(pool.latest?.price) && Number(pool.latest.price) > 0) continue;
+      queued.push(pool);
+    }
+    state.priceQueue = stillWaiting;
+    const rotation = [...state.pools.values()]
       .filter((pool) => (pool.veto?.state ?? null) !== 'BLOCK')
+      .filter((pool) => !queued.includes(pool))
       .filter((pool) => !Number.isFinite(pool.priceAt) || at - pool.priceAt >= PRICE_ENRICH_GAP_MS)
       .sort((a, b) => b.firstSeenAt - a.firstSeenAt)
       .slice(0, PRICE_ENRICH_PER_POLL);
-    for (const pool of candidates) {
+    for (const pool of [...queued, ...rotation]) {
       pool.priceAt = at;
       const info = await this.client.tokenInfo(chain, pool.address);
       if (!info || info.price === null) continue;
@@ -425,6 +482,11 @@ export class GmgnDiscovery {
       // mixed-ruler door this file was written to keep shut.
       pool.latest = { ...pool.latest, price: info.price,
         holders: info.holders ?? pool.latest.holders };
+      // Not the anchor. `snapshot` is the frozen first sighting and stays exactly
+      // what the feed reported at that moment - a later price written onto it
+      // would make "what did it look like when we first saw it" unanswerable
+      // after the fact. Claiming a late baseline is the tracking fold's job and
+      // its documented rule (fillMissingBaselines), not this file's.
       state.counts.priceReads++;
     }
   }
@@ -581,6 +643,11 @@ export class GmgnDiscovery {
       tradeCount: state.trades.length,
       counts: { ...state.counts },
       priceReads: state.counts.priceReads || 0,
+      // Requests the board made that this feed could no longer serve - usually a
+      // pool that aged out before its turn came. Reported, because a queue that
+      // quietly drops requests is indistinguishable from one that never got them.
+      priceQueueSkipped: state.counts.priceQueueSkipped || 0,
+      priceQueueDepth: (state.priceQueue || []).length,
       stale: !state.lastSuccessAt || at - state.lastSuccessAt > 5 * 60_000,
       // The anchors, newest sighting first. Both readings are exposed because
       // the pair is the point: a card that could only show the current value

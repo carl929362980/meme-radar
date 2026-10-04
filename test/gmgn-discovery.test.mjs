@@ -660,3 +660,43 @@ test('the price fill is capped per poll, skips nothing honest, and survives a fa
   assert.ok(after.poolCount >= 6, 'the pools are still there');
   assert.ok(after.pools.every((pool) => pool.latest.marketCap !== undefined), 'a failed fill touched nothing');
 });
+
+test('a card the board asked a price for is priced ahead of the newest-first rotation', async () => {
+  // The rotation is capped at six and the arrival rate is ~40 pools a minute, so
+  // a pool that is merely old never gets a price - and a pool with no price
+  // cannot be entered into the outcome frame. The board may therefore *ask*: one
+  // read each, drained before the rotation, and a pool that has already left the
+  // feed is counted as skipped rather than silently forgotten.
+  const addresses = Array.from({ length: 8 }, (_, i) => `Pool${i}111111111111111111111111111111111111`);
+  const { client } = fakeClient({ pools: [] });
+  client.trenches = async () => addresses.map((address, i) => poolRow({ address, symbol: `P${i}` }));
+  const reads = [];
+  client.tokenInfo = async (chain, address) => { reads.push(address); return { provider: 'GMGN', price: 0.001, liquidity: 1, holders: 1, volume1h: 1, smartWallets: 0, renownedWallets: 0 }; };
+  const h = harness({ client });
+  h.engine.start();
+  await h.tick();
+
+  // The oldest pool is the one the rotation will never reach.
+  const oldest = addresses[addresses.length - 1];
+  assert.equal(reads.includes(oldest), false, 'the rotation alone never reaches the oldest pool');
+  h.engine.requestPrices('sol', [oldest]);
+  h.advance(CHAIN_PLANS.sol.poolMs + 1_000);
+  await h.tick();
+  assert.ok(reads.includes(oldest), 'a requested price is read ahead of the rotation');
+  const priced = h.engine.observations('sol').pools.find(entry => entry.address === oldest);
+  assert.equal(priced.price, 0.001);
+  // The request is spent: it is not re-read every poll for the life of the pool.
+  const before = reads.filter(read => read === oldest).length;
+  h.advance(5 * 60_000);
+  await h.tick();
+  assert.equal(reads.filter(read => read === oldest).length, before, 'the request is drained, not repeated');
+
+  // A request for a pool this feed no longer holds is counted, not swallowed.
+  const skippedBefore = h.engine.snapshot('sol').priceQueueSkipped ?? 0;
+  h.engine.requestPrices('sol', ['Gone1111111111111111111111111111111111111']);
+  h.advance(CHAIN_PLANS.sol.poolMs + 1_000);
+  await h.tick();
+  assert.equal(h.engine.snapshot('sol').priceQueueSkipped, skippedBefore + 1, 'a request it cannot serve is reported');
+  // And the queue is bounded: a board that grows cannot grow the request list.
+  assert.equal(h.engine.requestPrices('sol', Array.from({ length: 900 }, (_, i) => `Q${i}1111111111111111111111111111111111111`)) <= 400, true);
+});

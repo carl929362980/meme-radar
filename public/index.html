@@ -1178,6 +1178,11 @@
       // out loud for the same reason the veto count is: a short board on its own
       // reads exactly like a market that went quiet.
       trackQuietCount: ['已滤除 {n} 个无动静','已濾除 {n} 個無動靜','{n} quiet, filtered out','{n}件は無反応のため除外','{n}개 무반응 제외','{n} بلا حركة، مُستبعد'],
+      // Cards the board is showing that the outcome frame cannot enter because
+      // they carry no price. Not quiet, not vetoed - they are on the board and
+      // unmeasurable, and a frame that silently cannot measure anything is the
+      // same failure as an empty outcome table.
+      trackUnpricedCount: ['{n} 个上板但尚无价格，未纳入测量','{n} 個上板但尚無價格，未納入測量','{n} on the board with no price yet, not measured','価格未取得のため未測定 {n}件','가격 없음 {n}개는 측정 제외','{n} على اللوحة بدون سعر، لم تُقَس'],
       trackFeedAnchor: ['发现流锚点','發現流錨點','Discovery-feed anchor','発見フィードの基準','발견 흐름 앵커','مرساة مصدر الاكتشاف'],
       trackLiveTag: ['在榜','在榜','On board','掲載中','목록에 있음','مدرج'],
       liveLp: ['流动性','流動性','Liquidity','流動性','유동성','السيولة'],
@@ -2877,6 +2882,7 @@
           // look like the market had gone quiet rather than like the board had
           // declined to print 1294 rows of nothing.
           + (number(summary.quiet) > 0 ? ' · ' + t('trackQuietCount', { n: formatCount(summary.quiet) }) : '')
+          + (number(summary.unpriced) > 0 ? ' · ' + t('trackUnpricedCount', { n: formatCount(summary.unpriced) }) : '')
           // And a sixth, for the part of the wallet feed that was given no row of
           // its own. An arrival is a sighting rather than an event, so it stays
           // out of the list - but it is still counted, for the same reason as

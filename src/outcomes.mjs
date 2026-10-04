@@ -61,14 +61,19 @@ export function dueOutcomeJobs(outcomes, now) {
 // taken. Using anything else would answer a different question than the board
 // is asking.
 //
-// Returns { created, boarded }: how many cards the board printed and how many of
-// them entered the frame. The gap between the two is reported rather than
-// swallowed - a frame that quietly stops growing is how a calibration run dies
-// without anyone noticing. Rows it skipped are skipped for a stated reason and
-// nothing is invented for them: a lead with no baseline price has no
-// measurement to make, and a lead whose price came from a source the caller
-// did not name has no ruler to measure it with.
+// Returns { created, boarded, noPrice, unnamed, awaiting }: how many cards the
+// board printed, how many entered the frame, and - the part that must never be
+// silent - exactly why the rest did not.
+//
+// `noPrice` is the one that used to be invisible: a `continue` with no count at
+// all, so a machine that had stopped being able to measure anything looked
+// exactly like a market that had produced nothing to measure. `awaiting` carries
+// the addresses behind it so the caller can go and get the missing reading
+// rather than waiting for a rotation to reach it.
 export const BOARDED_SAMPLE_LIMIT = 200;
+// How many unpriced addresses a single report may ask a price for. A board that
+// grew cannot grow one cycle's read budget with it.
+const AWAITING_LIMIT = 60;
 
 export function sampleBoarded(outcomes, records, now, { providers = {}, limit = BOARDED_SAMPLE_LIMIT } = {}) {
   const list = Array.isArray(outcomes) ? outcomes : [];
@@ -82,12 +87,21 @@ export function sampleBoarded(outcomes, records, now, { providers = {}, limit = 
   // counting the rows this call is itself adding would halve it.
   const existing = list.filter(row => row.initialDecision === 'X_REVIEW').length;
   let created = 0;
+  let noPrice = 0;
+  let unnamed = 0;
+  const awaiting = [];
   for (const { record, address } of rows) {
     if (existing + created >= ceiling) break;
     const price = Number(record?.snapshot?.price);
-    if (!(price > 0)) continue;
+    // No baseline price, no measurement - and no substitute: a market cap or a
+    // zero standing in for it would fabricate every return that followed.
+    if (!(price > 0)) {
+      noPrice++;
+      if (awaiting.length < AWAITING_LIMIT) awaiting.push(address);
+      continue;
+    }
     const providerName = providers?.[String(record?.source || 'market')];
-    if (typeof providerName !== 'string' || !providerName) continue;
+    if (typeof providerName !== 'string' || !providerName) { unnamed++; continue; }
     if (list.some(row => normalizeTokenAddress(row.chain || record.chain, row.address) === address)) continue;
     list.push({
       chain: record.chain,
@@ -105,7 +119,7 @@ export function sampleBoarded(outcomes, records, now, { providers = {}, limit = 
     });
     created++;
   }
-  return { created, boarded: rows.length };
+  return { created, boarded: rows.length, noPrice, unnamed, awaiting };
 }
 
 export function selectOutcomeJobs(scopes, { enabledChains = [], provider = 'GMGN', limit = 0, now = Date.now() } = {}) {
