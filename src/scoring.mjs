@@ -256,6 +256,71 @@ export function aveDiscoveryScreen(row, config, nowSec = Date.now() / 1000) {
       insider: optionalRate(row.rat_trader_amount_rate), wash: optionalBoolean(row.is_wash_trading), honeypot: optionalBoolean(row.is_honeypot) })[field] === null) };
 }
 
+// The GMGN discovery screen.
+//
+// This is a separate screen rather than a branch of the generic one because the
+// two routes behind it do not answer the same questions, and a shared screen
+// would have to either drop gates the generic path needs or apply gates this
+// route cannot satisfy.
+//
+// The one deliberate difference is the honeypot gate. The generic path demands
+// `is_honeypot` on every non-Solana chain, and neither of the GMGN routes that
+// supply the radar publishes it - so that gate would reject 100% of BSC rows and
+// the radar would be empty for the same silent reason it has been empty all
+// along. It is not treated as "no honeypot"; it is carried out of this screen as
+// an unassessed axis (`hasUnknownRisk`, and `honeypot: null` on the row), and
+// the card says so. Requiring an answer a route does not give is not stricter,
+// it is blinder.
+//
+// Every other gate is the market's own: an unknown reading is a reason, never a
+// pass.
+export function gmgnDiscoveryScreen(row, config, nowSec = Date.now() / 1000) {
+  const chain = config.chain;
+  const mcValue = optionalNonNegativeNumber(first(row.market_cap, row.usd_market_cap));
+  const createdValue = optionalNumber(first(row.creation_timestamp, row.created_timestamp, row.open_timestamp));
+  const liquidityValue = optionalNonNegativeNumber(row.liquidity);
+  const rug = optionalRate(row.rug_ratio);
+  const bundler = optionalRate(first(row.bundler_rate, row.bundler_trader_amount_rate));
+  const insider = optionalRate(first(row.rat_trader_amount_rate, row.suspected_insider_hold_rate));
+  const wash = optionalBoolean(row.is_wash_trading);
+  const mc = mcValue ?? 0;
+  const created = createdValue ?? 0;
+  const ageSec = created > 0 ? nowSec - created : 0;
+  const liquidity = liquidityValue ?? 0;
+  const reasons = [];
+  if (row.chain !== chain || !validTokenAddress(chain, row.address)) reasons.push('链或代币地址不匹配');
+  if (createdValue === null || created <= 0) reasons.push('创建时间未知');
+  else if (!(ageSec >= config.minAgeSec)) reasons.push('创建不足5分钟');
+  else if (ageSec > config.maxAgeSec) reasons.push('超过观察年龄上限');
+  if (mcValue === null) reasons.push('市值数据未知');
+  else if (!(mc >= config.discoveryMinMarketCap && mc <= config.discoveryMaxMarketCap)) reasons.push('市值不在发现范围');
+  if (liquidityValue === null) reasons.push('流动性数据未知');
+  else if (liquidity < config.minLiquidity) reasons.push('流动性不足');
+  if (rug === null) reasons.push('rug风险未评估');
+  else if (rug > 0.30) reasons.push('rug风险过高');
+  if (bundler === null) reasons.push('捆绑机器人未评估');
+  else if (bundler > 0.30) reasons.push('捆绑机器人占比过高');
+  if (insider === null) reasons.push('内幕/老鼠仓未评估');
+  else if (insider > 0.30) reasons.push('内幕/老鼠仓占比过高');
+  if (wash === null) reasons.push('刷量未评估');
+  else if (wash) reasons.push('检测到刷量');
+  const priorityBand = mc >= config.priorityMinMarketCap && mc <= config.priorityMaxMarketCap;
+  const holders = num(row.holder_count);
+  // No volume term. The rank route reports volume without naming its window and
+  // the trenches route reports a 24-hour figure, so neither can be scored as a
+  // short-window activity number - a score is a ranking, but ranking on a span
+  // nobody named would be a claim.
+  const score = (priorityBand ? 35 : 10) + Math.min(25, liquidity / 1000) + Math.min(20, holders / 10);
+  return {
+    pass: reasons.length === 0, reasons, priorityBand, score, mc, liquidity, ageSec,
+    createdAt: created > 0 ? created : null,
+    ageBasis: created > 0 ? 'token' : 'unknown',
+    unknownFields: ['marketCap', 'createdAt', 'liquidity', 'rugRatio', 'bundler', 'insider', 'wash', 'honeypot']
+      .filter(field => ({ marketCap: mcValue, createdAt: createdValue, liquidity: liquidityValue,
+        rugRatio: rug, bundler, insider, wash, honeypot: null })[field] === null)
+  };
+}
+
 // Known adverse facts are shared by both discovery entrances. Missing facts
 // remain unknown and must still pass the complete deep audit before alerting.
 export function knownRiskReasons(row, config) {
@@ -274,6 +339,7 @@ export function knownRiskReasons(row, config) {
 
 export function discoveryScreen(row, config, nowSec = Date.now() / 1000) {
   if (row?.marketProvider === 'AVE') return aveDiscoveryScreen(row, config, nowSec);
+  if (row?.marketProvider === 'GMGN') return gmgnDiscoveryScreen(row, config, nowSec);
   const mcValue = optionalNumber(first(row.market_cap, row.usd_market_cap, row.mcp));
   const createdValue = optionalNumber(first(row.creation_timestamp, row.created_timestamp, row.open_timestamp));
   const liquidityValue = optionalNumber(row.liquidity);

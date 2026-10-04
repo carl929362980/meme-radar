@@ -46,6 +46,7 @@
     "src/chart-risk.mjs",
     "src/config.mjs",
     "src/gmgn-discovery.mjs",
+    "src/gmgn-radar.mjs",
     "src/gmgn.mjs",
     "src/goplus.mjs",
     "src/live-discovery.mjs",

@@ -17,17 +17,38 @@ const safeUrl = value => {
 };
 const waitingReasons = new Set(['AVE 行情已过期或原始时间未核验', '市值原始时间待更新',
   '池龄或首笔成交时间未知', '市值数据未知', '流动性数据未知', '近5分钟成交额不足或未知', '价格数据未知']);
-function aveDisplayState(raw, chain, at) {
+// What "not yet" means for a GMGN row. A pool that has not reached the age gate
+// is not a rejected pool - it is one this radar has seen and is still waiting
+// on, and dropping it is what made `firstSeenAt` unreachable for every genuinely
+// new pool. The two remaining reasons are the only ones that work that way; the
+// rest are answers ("too big", "rug risk high"), and an answer is not a wait.
+const gmgnWaitingReasons = new Set(['创建时间未知', '创建不足5分钟']);
+
+// Discovery rows arrive from more than one provider, and the two do not agree
+// on what a reading means - measured, their liquidity differs by up to 5x on the
+// same pool - so each keeps its own screen and its own idea of "not yet".
+// Dressing one in the other's field names is what this split exists to prevent.
+function providerNameOf(raw) {
+  const name = raw?.marketProvider;
+  return name === 'AVE' || name === 'GMGN' ? name : null;
+}
+function displayState(raw, chain, at) {
+  const provider = providerNameOf(raw);
   const screen = discoveryScreen(raw, { ...config, chain }, at / 1000);
-  const visible = screen.pass || screen.reasons.every(reason => waitingReasons.has(reason));
-  const missing = !(number(raw.liquidity) > 0) || !(number(raw.volume_5m) > 0) || !(screen.createdAt > 0) || !(number(raw.market_cap) > 0);
-  return { screen, visible, state: screen.pass ? 'READY' : missing ? 'PENDING' : 'STALE' };
+  if (provider === 'AVE') {
+    const visible = screen.pass || screen.reasons.every(reason => waitingReasons.has(reason));
+    const missing = !(number(raw.liquidity) > 0) || !(number(raw.volume_5m) > 0) || !(screen.createdAt > 0) || !(number(raw.market_cap) > 0);
+    return { screen, visible, state: screen.pass ? 'READY' : missing ? 'PENDING' : 'STALE' };
+  }
+  const pending = screen.reasons.length > 0 && screen.reasons.every(reason => gmgnWaitingReasons.has(reason));
+  return { screen, visible: screen.pass || pending, state: screen.pass ? 'READY' : pending ? 'PENDING' : 'STALE' };
 }
 export function discoveryDiagnostics(input, chain, at = Date.now()) {
   const summary = { received: input.length, inRange: 0, pending: 0, stale: 0, ready: 0, excluded: 0, outsideRange: 0 };
   for (const raw of input.slice(0, 300)) {
-    if (raw?.marketProvider !== 'AVE' || !addressValid(chain, raw.address) || raw.chain !== chain) { summary.excluded++; continue; }
-    const { screen, visible, state } = aveDisplayState(raw, chain, at);
+    const provider = providerNameOf(raw);
+    if (!provider || !addressValid(chain, raw.address) || raw.chain !== chain) { summary.excluded++; continue; }
+    const { screen, visible, state } = displayState(raw, chain, at);
     if (screen.mc >= config.discoveryMinMarketCap && screen.mc <= config.discoveryMaxMarketCap) summary.inRange++;
     if (screen.reasons.includes('市值不在发现范围')) summary.outsideRange++;
     if (!visible) summary.excluded++;
@@ -41,19 +62,22 @@ export function normalizeLiveRows(input, chain, previous = [], at = Date.now(), 
   const before = new Map(previous.map(row => [identity(chain, row.address), row]));
   const unique = new Map();
   for (const raw of input.slice(0, 300)) {
-    // Historical or unlabelled observations are not current AVE evidence.
-    if (!raw || raw.marketProvider !== 'AVE' || !addressValid(chain, raw.address) || raw.chain !== chain) continue;
+    // Historical or unlabelled observations are not current evidence from any
+    // provider, and a row may only ever be graded by the screen of the provider
+    // that produced it.
+    const provider = providerNameOf(raw);
+    if (!provider || !addressValid(chain, raw.address) || raw.chain !== chain) continue;
     const address = identity(chain, raw.address);
-    const { screen, visible, state } = aveDisplayState(raw, chain, at);
+    const { screen, visible, state } = displayState(raw, chain, at);
     if (!visible) continue;
     const stale = !screen.pass;
     const old = before.get(address), observedAt = number(raw.sourceUpdatedAt), elapsed = old ? observedAt - old.observedAt : 0;
-    const comparable = !stale && old?.marketProvider === 'AVE' && elapsed >= 5000 && elapsed <= 120000;
+    const comparable = !stale && old?.marketProvider === provider && elapsed >= 5000 && elapsed <= 120000;
     const price = number(raw.price), holders = count(raw.holder_count);
     const holderAt = number(raw.tokenSourceUpdatedAt ?? raw.sourceUpdatedAt);
     const holderComparable = comparable && holderAt > (old?.holderSourceUpdatedAt || 0);
     unique.set(address, {
-      address, chain, marketProvider: 'AVE', symbol: safeText(raw.symbol || '?', 30), name: safeText(raw.name, 80),
+      address, chain, marketProvider: provider, symbol: safeText(raw.symbol || '?', 30), name: safeText(raw.name, 80),
       marketCap: number(raw.market_cap), liquidity: number(raw.liquidity), createdAt: screen.createdAt, ageBasis: screen.ageBasis,
       price: price > 0 ? price : null, volume1m: null, buys1m: null, sells1m: null, swaps1m: null,
       volume5m: number(raw.volume_5m), buys5m: count(raw.buys_5m), sells5m: count(raw.sells_5m), activityWindow: '5m',
@@ -86,6 +110,14 @@ export class LiveDiscovery {
     this.backgroundGeneration = 0;
     this.states = new Map(); this.raw = new Map(); this.identityHistory = new Map(); this.focus = ''; this.leaseUntil = 0;
     this.nextPollAt = 0; this.running = false; this.timer = null; this.stopped = false; this.epoch = this.provider.keyEpoch;
+  }
+
+  // Which provider this channel is fed by. Read from the client rather than
+  // assumed, so switching the discovery source cannot leave rows labelled with
+  // the previous one - a row's provider is what decides which ruler measured it.
+  get marketProvider() {
+    try { return String(this.provider?.snapshot?.().provider || '') === 'GMGN' ? 'GMGN' : 'AVE'; }
+    catch { return 'AVE'; }
   }
 
   async enrichMarket(chain, rows) {
@@ -132,7 +164,7 @@ export class LiveDiscovery {
     });
     const rows = this.normalizeRows(marketRows, chain, old, now);
     const capturedAt = rows.length ? Math.max(...rows.map(row => row.capturedAt || 0)) : input.capturedAt;
-    this.states.set(chain, { ...old, rows, status: capturedAt ? 'READY' : 'WAITING', marketProvider: 'AVE',
+    this.states.set(chain, { ...old, rows, status: capturedAt ? 'READY' : 'WAITING', marketProvider: this.marketProvider,
       lastPollAt: now, lastSuccessAt: capturedAt, receivedCount: input.tokens.length,
       filteredCount: Math.max(0, input.tokens.length - rows.length), diagnostics: discoveryDiagnostics(marketRows, chain, now) });
     const visible = new Set(rows.map(row => row.address));
@@ -195,7 +227,7 @@ export class LiveDiscovery {
     });
     const previous = [...remembered, ...old.rows];
     const rows = normalizeLiveRows(input, chain, previous, at, old.lastSuccessAt > 0);
-    for (const row of rows) history.set(row.address, { address: row.address, chain, marketProvider: 'AVE',
+    for (const row of rows) history.set(row.address, { address: row.address, chain, marketProvider: this.marketProvider,
       firstSeenAt: row.firstSeenAt, newAt: row.newAt, qualifiedAt: row.qualifiedAt, lastSeenAt: at });
     this.identityHistory.set(chain, history);
     return rows;
@@ -296,7 +328,7 @@ export class LiveDiscovery {
       const now = this.now();
       const rows = this.normalizeRows(input, chain, old, now);
       const capturedAt = rows.length ? Math.max(...rows.map(row => row.capturedAt || 0)) : number(result.capturedAt) || 0;
-      this.states.set(chain, { rows, status: this.cacheOnly && !capturedAt ? 'WAITING' : 'READY', marketProvider: 'AVE', lastAttemptAt: at, lastPollAt: now, lastSuccessAt: capturedAt,
+      this.states.set(chain, { rows, status: this.cacheOnly && !capturedAt ? 'WAITING' : 'READY', marketProvider: this.marketProvider, lastAttemptAt: at, lastPollAt: now, lastSuccessAt: capturedAt,
         requestMs: now - at, pollCount: old.pollCount + 1, receivedCount: input.length, filteredCount: Math.max(0, input.length - rows.length),
         diagnostics: discoveryDiagnostics(input, chain, now) });
       this.raw.set(chain, new Map(input.filter(row => row && addressValid(chain, row.address) && rows.some(x => identity(chain, row.address) === x.address))
@@ -319,7 +351,7 @@ export class LiveDiscovery {
     const pausedStatus = pauseCode === 'AVE_TOTAL_BUDGET' ? 'TOTAL_BUDGET_PAUSED' : pauseCode === 'AVE_HOURLY_BUDGET' ? 'HOURLY_BUDGET_PAUSED'
       : pauseCode === 'AVE_BUDGET' ? 'BUDGET_PAUSED' : pauseCode === 'AVE_QUOTA' ? 'QUOTA_PAUSED' : 'RATE_LIMITED';
     const rows = state.rows.map(row => {
-      if (row.marketProvider !== 'AVE') return row;
+      if (row.marketProvider !== this.marketProvider) return row;
       const stale = row.stale || this.now() - row.sourceUpdatedAt > 60000 || row.expiresAt !== null && row.expiresAt <= this.now();
       return { ...row, stale, auditEligible: row.auditEligible && !stale,
         discoveryState: row.discoveryState === 'READY' && stale ? 'STALE' : row.discoveryState };
@@ -340,7 +372,8 @@ export class LiveDiscovery {
     if (snapshot.stale || this.provider.disabled || snapshot.status === 'AUTH_REQUIRED') return null;
     const row = this.raw.get(chain)?.get(identity(chain, address));
     if (!row) return null;
-    if (row.marketProvider === 'AVE' && !discoveryScreen(row, { ...this.settings, chain }, this.now() / 1000).pass) return null;
+    if (row.marketProvider !== this.marketProvider) return null;
+    if (!discoveryScreen(row, { ...this.settings, chain }, this.now() / 1000).pass) return null;
     // Interval-specific counters must never masquerade as five-minute counters.
     const { volume, swaps, buys, sells, price_change_percent, ...audit } = row;
     return structuredClone(audit);
