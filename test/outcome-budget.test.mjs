@@ -1,13 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { config } from '../src/config.mjs';
-import { collectOutcomeSamples, dueOutcomeJobs, selectOutcomeJobs, horizons } from '../src/outcomes.mjs';
+import { collectOutcomeSamples, dueOutcomeJobs, selectOutcomeJobs, horizons, sampleBoarded } from '../src/outcomes.mjs';
 import { Scanner, updateOutcomeTracking, upsertOutcome } from '../src/scanner.mjs';
 
 const AT = 1800000000000;
 const ca = n => '0x' + n.toString(16).padStart(40, '0');
+// Baselines are named for the provider that priced them, and the read-back only
+// ever answers for that name - so the fixtures name GMGN, the source the
+// machine now measures with.
 function history(changes = {}) {
-  return { address: ca(1), chain: 'bsc', baselineProvider: 'AVE', baselineAt: AT - 1900000,
+  return { address: ca(1), chain: 'bsc', baselineProvider: 'GMGN', baselineAt: AT - 1900000,
     baselinePrice: 1, initialDecision: 'X_REVIEW', samples: {}, ...changes };
 }
 function memoryState(outcomes = []) {
@@ -19,16 +22,21 @@ function provider(changes = {}) {
     lastDiscoveryHealth: { complete: true, checkedAt: AT }, ...changes };
 }
 
-test('default scanner spends no CU on a large historical backlog and preserves records', async t => {
+test('the default scan caps read-backs instead of draining a backlog, and preserves records', async t => {
   t.mock.method(Date, 'now', () => AT);
-  assert.equal(config.outcomeReadsPerCycle, 0);
+  // A ceiling, not a target: one kline read is weight 2 against a discovery poll
+  // that costs about ten, so the backlog is worked a couple of rows per scan and
+  // measurement can never crowd out discovery. Zero would be cheaper still and
+  // would also mean the outcome table is never filled at all.
+  assert.ok(config.outcomeReadsPerCycle > 0 && config.outcomeReadsPerCycle <= 12);
   const records = Array.from({ length: 100 }, (_, i) => history({ address: ca(i + 1) }));
   const state = memoryState(records);
   state.value.chainStates.eth = { outcomes: [history({ chain: 'eth' })] };
   let reads = 0;
   const scanner = new Scanner({ provider: provider({ priceAt: async () => { reads++; return null; } }), state, settings: { ...config, chain: 'bsc' } });
   await scanner.cycle(); scanner.stop();
-  assert.equal(reads, 0);
+  assert.equal(reads, config.outcomeReadsPerCycle);
+  // The backlog itself is untouched: a cap on spending is not a purge of history.
   assert.equal(state.value.outcomes.length, 100);
   assert.equal(state.value.chainStates.eth.outcomes.length, 1);
   assert.deepEqual(state.value.outcomes[0].samples, {});
@@ -36,10 +44,14 @@ test('default scanner spends no CU on a large historical backlog and preserves r
 
 test('opt-in paid backfill only selects enabled chains and matching baseline providers', () => {
   const scopes = { bsc: [history({ baselineProvider: undefined }), history({ address: ca(2) }), history({ chain: 'eth' })], eth: [history({ chain: 'eth' })] };
-  const jobs = selectOutcomeJobs(scopes, { enabledChains: ['bsc'], provider: 'AVE', limit: 4, now: AT });
+  const jobs = selectOutcomeJobs(scopes, { enabledChains: ['bsc'], provider: 'GMGN', limit: 4, now: AT });
   assert.equal(jobs.length, 3);
   assert.ok(jobs.every(job => job.chain === 'bsc' && job.row.address === ca(2)));
-  assert.deepEqual(selectOutcomeJobs(scopes, { enabledChains: ['bsc'], provider: 'AVE', limit: 0, now: AT }), []);
+  assert.deepEqual(selectOutcomeJobs(scopes, { enabledChains: ['bsc'], provider: 'GMGN', limit: 0, now: AT }), []);
+  // A named provider only answers for its own baselines: an AVE row is left for
+  // AVE, and an unnamed one is left alone rather than adopted.
+  assert.deepEqual(selectOutcomeJobs(scopes, { enabledChains: ['bsc'], provider: 'AVE', limit: 4, now: AT }), []);
+  assert.deepEqual(selectOutcomeJobs(scopes, { enabledChains: ['bsc'], provider: '', limit: 4, now: AT }), []);
 });
 
 test('failed historical windows stop after three attempts without fabricated prices', async () => {
@@ -80,6 +92,51 @@ test('cancelled paid sampling forwards the signal and never records a late resul
   assert.equal(calls, 1); assert.deepEqual(rows[0].samples, {}); assert.equal(rows[0].sampleRetries, undefined);
 });
 
+test('the boarded sampling frame measures every card the board printed', () => {
+  const board = [
+    { chain: 'bsc', address: ca(1), symbol: 'ONE', source: 'feed', firstSeenAt: AT - 600_000,
+      snapshot: { at: AT - 600_000, price: 1 } },
+    { chain: 'bsc', address: ca(2), symbol: 'TWO', source: 'feed', firstSeenAt: AT - 600_000,
+      snapshot: { at: AT - 600_000, price: 2 } },
+    // No baseline price: the board shows "—" for this axis, and there is no
+    // measurement to make. Skipped, not zeroed.
+    { chain: 'bsc', address: ca(3), symbol: 'THREE', source: 'feed', firstSeenAt: AT - 600_000,
+      snapshot: { at: AT - 600_000, price: null } }
+  ];
+  const outcomes = [];
+  const report = sampleBoarded(outcomes, board, AT, { providers: { feed: 'GMGN' } });
+  assert.deepEqual(report, { created: 2, boarded: 3 });
+  assert.equal(outcomes.length, 2);
+  // The cohort key the coverage table already counts, so these rows land in
+  // `passed` instead of sitting in a cohort nobody reads.
+  assert.ok(outcomes.every(row => row.initialDecision === 'X_REVIEW'));
+  assert.equal(outcomes[0].baselineProvider, 'GMGN');
+  assert.equal(outcomes[0].baselinePrice, 1);
+  assert.equal(outcomes[0].baselineAt, AT - 600_000);
+  // Idempotent: a second pass over the same board adds nothing, and does not
+  // re-stamp an existing baseline.
+  assert.deepEqual(sampleBoarded(outcomes, board, AT, { providers: { feed: 'GMGN' } }), { created: 0, boarded: 3 });
+  assert.equal(outcomes.length, 2);
+});
+
+test('a boarded row whose price came from a source nobody named is not measured', () => {
+  // A source left out of `providers` has no ruler to be measured with, so it
+  // produces no baseline rather than an unmeasurable one.
+  const board = [{ chain: 'sol', address: '7U62Lm4CKa25eRdBdYv3QeTJjJirxTVGJpA3ePkkpump', symbol: 'X',
+    source: 'feed', firstSeenAt: AT, snapshot: { at: AT, price: 1 } }];
+  const outcomes = [];
+  assert.deepEqual(sampleBoarded(outcomes, board, AT, { providers: {} }), { created: 0, boarded: 1 });
+  assert.equal(outcomes.length, 0);
+  // An address this build cannot normalise is never keyed loosely.
+  assert.deepEqual(sampleBoarded(outcomes, [{ chain: 'bsc', address: 'nope', source: 'feed',
+    firstSeenAt: AT, snapshot: { at: AT, price: 1 } }], AT, { providers: { feed: 'GMGN' } }), { created: 0, boarded: 0 });
+  // And the frame is bounded, so a board that grows cannot grow the state file
+  // without limit.
+  const many = Array.from({ length: 10 }, (_, i) => ({ chain: 'bsc', address: ca(i + 1), source: 'feed',
+    firstSeenAt: AT, snapshot: { at: AT, price: 1 } }));
+  assert.deepEqual(sampleBoarded([], many, AT, { providers: { feed: 'GMGN' }, limit: 4 }), { created: 4, boarded: 10 });
+});
+
 test('passive observations remain free but never mix legacy and AVE baselines', () => {
   const row = { chain: 'bsc', address: ca(1), marketProvider: 'AVE', price: 2,
     capturedAt: AT, sourceUpdatedAt: AT, expiresAt: AT + 30000, stale: false };
@@ -92,20 +149,40 @@ test('passive observations remain free but never mix legacy and AVE baselines', 
   assert.equal(created[0].baselineProvider, 'AVE');
 });
 
-test('unknown and explicitly legacy baselines retain history without paid or passive AVE backfills', async () => {
-  const legacy = [undefined, 'LEGACY_UNKNOWN', 'GMGN'].map((baselineProvider, index) => history({
+test('unknown and explicitly legacy baselines retain history without paid or passive backfills', async () => {
+  // Two baselines with no ruler named on them: one written before provenance was
+  // recorded, one explicitly marked. Neither may acquire a price from whichever
+  // provider happens to be connected - an unlabelled curve is unmeasurable, not
+  // free to adopt.
+  const legacy = [undefined, 'LEGACY_UNKNOWN'].map((baselineProvider, index) => history({
     address: ca(index + 1), baselineProvider, baselineAt: AT - horizons.m30 - 60_000,
     samples: { m5: { at: AT - horizons.m30, price: 1.5, return: .5, source: 'LEGACY_SNAPSHOT' } }
   }));
   const before = structuredClone(legacy);
   const quotes = new Map(legacy.map(item => [item.address, { chain: 'bsc', address: item.address,
-    marketProvider: 'AVE', price: 2, capturedAt: AT, sourceUpdatedAt: AT, expiresAt: AT + 30_000, stale: false }]));
+    marketProvider: 'GMGN', price: 2, capturedAt: AT, sourceUpdatedAt: AT, expiresAt: AT + 30_000, stale: false }]));
   assert.deepEqual(updateOutcomeTracking(legacy, quotes, AT, config.outcomeRetentionMs), before);
   let reads = 0;
   await collectOutcomeSamples(legacy, { priceAt: async () => { reads++; return { at: AT, price: 2 }; } }, 'bsc', { now: () => AT });
   assert.equal(reads, 0);
   assert.deepEqual(legacy, before);
   assert.deepEqual(selectOutcomeJobs({ bsc: legacy }, { enabledChains: ['bsc'], limit: 4, now: AT }), []);
+});
+
+test('a named baseline is read back by the provider that priced it and nobody else', async () => {
+  const rows = [history({ baselineAt: AT - horizons.m30 - 60_000 })];
+  const read = async (providerName) => {
+    const fresh = structuredClone(rows);
+    let reads = 0;
+    await collectOutcomeSamples(fresh, { priceAt: async () => { reads++; return { at: AT, price: 2 }; } }, 'bsc',
+      { now: () => AT, providerName });
+    return reads;
+  };
+  assert.ok(await read('GMGN') > 0, 'the provider that set the baseline answers for it');
+  assert.equal(await read('AVE'), 0, 'a different provider does not');
+  // Same rule one layer up: job selection follows the row's own name.
+  assert.equal(selectOutcomeJobs({ bsc: rows }, { enabledChains: ['bsc'], provider: 'GMGN', limit: 4, now: AT }).length > 0, true);
+  assert.deepEqual(selectOutcomeJobs({ bsc: rows }, { enabledChains: ['bsc'], provider: 'AVE', limit: 4, now: AT }), []);
 });
 
 test('unlabelled outcome creation marks unknown provenance instead of asserting AVE', () => {

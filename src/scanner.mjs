@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { discoveryScreen, deepScreen, knownRiskReasons, marketCap, createdAt } from './scoring.mjs';
 import { socialGate } from './social.mjs';
 import { tokenInfoPrice } from './ave.mjs';
-import { collectOutcomeSamples, selectOutcomeJobs, outcomeCoverage, sampleRejected } from './outcomes.mjs';
+import { collectOutcomeSamples, selectOutcomeJobs, outcomeCoverage, sampleRejected, sampleBoarded } from './outcomes.mjs';
 import { observeTracks, summarizeTracking, worthWatching } from './tracking.mjs';
 import { goplusIdentity } from './goplus.mjs';
 import { tokenKey } from './local-store.mjs';
@@ -315,7 +315,11 @@ export function updateOutcomeTracking(outcomes, discoveredByAddress, now, retent
     .filter(item => ['X_REVIEW', 'HARD_REJECT'].includes(item?.initialDecision))
     .filter(item => now - num(item.baselineAt) <= retentionMs).map(item => {
     const row = discoveredByAddress.get(addressKey(item.address));
-    if (row?.marketProvider !== 'AVE' || item.baselineProvider !== 'AVE') return item;
+    // The quote that fills a passive sample must come from the same ruler that
+    // set the baseline, and only that one. A named baseline with no matching
+    // quote stays unfilled rather than being completed by whoever happens to be
+    // talking today.
+    if (!row?.marketProvider || row.marketProvider !== item.baselineProvider) return item;
     const price = tokenPrice(row, now);
     if (item.chain && row.chain !== item.chain || addressKey(row.address) !== addressKey(item.address)) return item;
     if (!(price > 0) || !(item.baselinePrice > 0)) return item;
@@ -421,8 +425,19 @@ function addEvent(events, type, message, chain, data = {}) {
 }
 
 export class Scanner {
-  constructor({ provider, secondary = null, goplus = null, feed = null, state, controls = null, settings = config, sharedRequestIntervalMs = 5 * 60_000 }) {
+  constructor({ provider, secondary = null, goplus = null, feed = null, state, controls = null, settings = config, sharedRequestIntervalMs = 5 * 60_000,
+    // Who answers the outcome read-back. Distinct from `provider` on purpose:
+    // `provider` is the market client that runs discovery and deep audits, and
+    // its budget lanes are shaped for that job. The read-back asks a different
+    // question (what did this cost 24 h ago) of a different route, and folding
+    // it into the audit client would let a backlog of old rows compete with
+    // discovery for the same lane. Falls back to the discovery feed's own
+    // client, then to the market client, so a caller that wires neither keeps
+    // the behaviour it had.
+    outcomeProvider = null, outcomeProviderName = 'GMGN' } = {}) {
     this.provider = provider;
+    this.outcomeProvider = outcomeProvider || feed?.client || provider;
+    this.outcomeProviderName = outcomeProviderName;
     this.cycleController = null;
     this.secondary = secondary;
     // Optional tracking enrichment. Never required: a null reader simply means
@@ -922,7 +937,7 @@ export class Scanner {
           const label = { X_REVIEW: '链上通过，待人工看X', WAIT_RECHECK: '等待短时复查', HARD_REJECT: '永久安全拒绝' }[candidate.status];
           events = addEvent(events, candidate.status, `${token.symbol}：${label}`, chain, { address: token.address });
           outcomes = upsertOutcome(outcomes, candidate, auditedAt);
-          if (candidate.marketProvider === 'AVE' && tokenInfoPrice(candidate, auditedAt)) outcomes = sampleRejected(outcomes, candidate, candidate.sourceUpdatedAt);
+          if (candidate.marketProvider && tokenInfoPrice(candidate, auditedAt)) outcomes = sampleRejected(outcomes, candidate, candidate.sourceUpdatedAt);
         } catch (error) {
           if (controller.signal.aborted || this.provider.keyEpoch !== keyEpoch) return;
           if (['AVE_DISCOVERY_RESERVE', 'AVE_BUDGET', 'AVE_HOURLY_BUDGET', 'AVE_TOTAL_BUDGET'].includes(error?.code)) {
@@ -960,12 +975,18 @@ export class Scanner {
 
       const outcomeScopes = { ...Object.fromEntries(Object.entries(prior.chainStates || {}).map(([id, scope]) => [id, scope.outcomes || []])), [chain]: outcomes };
       const sampleJobs = selectOutcomeJobs(outcomeScopes, { enabledChains: this.controls?.value.enabledChains || [chain],
-        provider: 'AVE', limit: settings.outcomeReadsPerCycle, now: Date.now() });
+        provider: this.outcomeProviderName, limit: settings.outcomeReadsPerCycle, now: Date.now() });
       for (const job of sampleJobs) {
-        if (this.provider.snapshot?.().recovery?.auditAllowed === false) break;
-        if (controller.signal.aborted || this.provider.disabled || this.provider.nextAllowedAt > Date.now()) break;
+        if (controller.signal.aborted || Date.now() >= startedAt + (settings.auditCycleBudgetMs || 80_000) + 25_000) break;
         if (!(this.controls?.value.enabledChains || [chain]).includes(job.chain)) continue;
-        await collectOutcomeSamples([job.row], this.provider, job.chain, { limit: 1, onlyKey: job.key, signal: controller.signal,
+        // Read-back is its own lane: it is shaped by the outcome client's own
+        // pacing (`nextAllowedAt`) and by this cycle's read ceiling, not by the
+        // audit client's budget lanes - a backlog of yesterday's rows must never
+        // be able to stall discovery, and a paused audit must not stop a
+        // measurement that costs nothing to make.
+        if (this.outcomeProvider.cooling?.() || this.outcomeProvider.nextAllowedAt > Date.now()) break;
+        await collectOutcomeSamples([job.row], this.outcomeProvider, job.chain, { limit: 1, onlyKey: job.key, signal: controller.signal,
+          providerName: this.outcomeProviderName,
           deadline: startedAt + (settings.auditCycleBudgetMs || 80_000) + 25_000 });
       }
       for (const [id, rows] of Object.entries(outcomeScopes)) {
@@ -1026,6 +1047,19 @@ export class Scanner {
       // reading its ladder is measured from - survives a quiet cycle, and only the
       // printed board leaves the quiet ones out.
       const board = tracking.filter(row => worthWatching(row, now));
+      // The measurement frame is the board, taken after the board is decided. A
+      // card the machine showed is a claim it made, and the only way to find out
+      // whether those claims are worth anything is to measure all of them -
+      // including the quiet ones, which is exactly the set a rejects-only frame
+      // can never see.
+      //
+      // `feed` rows are priced by the discovery feed (GMGN); `market` rows carry
+      // the market provider's own quote. Naming both here keeps the mapping with
+      // the thing that knows it, and a source left unmapped produces no baseline
+      // rather than an unmeasurable one.
+      const boardedSampling = sampleBoarded(outcomes, board, now, {
+        providers: { feed: 'GMGN', market: this.provider.snapshot?.().provider || null }
+      });
       const next = {
         ...prior,
         version: 2,
@@ -1054,7 +1088,11 @@ export class Scanner {
         liveLeads,
         auditQueueStats: queueStats(auditQueue, availableAddresses, now, settings),
         outcomes,
-        outcomeSummary: summarizeOutcomes(outcomes),
+        // `boardedFrame` is reported, not just performed: how many cards the
+        // board printed this cycle and how many of them were actually entered
+        // into the measurement frame. A frame that quietly stops growing is how
+        // a calibration run dies without anyone noticing.
+        outcomeSummary: { ...summarizeOutcomes(outcomes), boardedFrame: boardedSampling },
         track: tracking,
         // The summary describes the board, so it is handed the board, and the
         // leads left out of it are counted rather than dropped in silence: a board

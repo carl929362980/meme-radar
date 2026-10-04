@@ -23,8 +23,16 @@ export const config = Object.freeze({
   // provider rate bucket and must never stall the primary discovery lane.
   maxDeepAuditsPerCycle: boundedInteger(process.env.MAX_DEEP_AUDITS_PER_CYCLE, 0, 0, 12),
   auditCycleBudgetMs: 80_000,
-  // Historical K-line backfills are optional; live observations still track outcomes.
-  outcomeReadsPerCycle: 0,
+  // Read-backs per scan. Zero leaves the outcome table empty forever: a named
+  // baseline is only ever completed by the provider that priced it, and the
+  // passive path can only complete a row from a live quote of that same
+  // provider - so a GMGN baseline with no read-back is never measured at all.
+  //
+  // Two is deliberately tiny, and it is a ceiling rather than a target: one
+  // read is weight 2 on a budget where a single discovery poll costs about ten,
+  // so a backlog is worked a couple of rows per scan and measurement can never
+  // crowd out discovery.
+  outcomeReadsPerCycle: boundedInteger(process.env.RADAR_OUTCOME_READS_PER_CYCLE, 2, 0, 12),
   xReviewMode: 'manual',
   minAgeSec: 5 * 60,
   maxAgeSec: 7 * 86400,
@@ -69,11 +77,29 @@ export const config = Object.freeze({
   // Tracking is a first-sighting comparison, so it is kept on its own retention
   // clock instead of the outcome windows that calibration depends on.
   trackRetentionMs: 7 * 24 * 60 * 60_000,
-  // Feed leads age on the feed's clock, not the market board's. The discovery
-  // feed only ever knows a pool while it is inside its own half-hour window, so
-  // a lead it has stopped reporting is not a lead. Sharing the week above would
-  // keep every pool ever seen and grow the state file without bound.
-  feedTrackRetentionMs: 60 * 60_000,
+  // Feed leads age on the feed's own clock, not the market board's.
+  //
+  // Raised from one hour to twenty-four, because one hour is shorter than the
+  // machine's own measurement horizon: the outcome table reads a baseline back
+  // at T+5m through T+24h, and a card that only crosses its first rung after an
+  // hour of watching was being deleted before it could ever be entered into the
+  // frame. The whole point of the table is to answer "did this find anything",
+  // and a frame that only ever holds cards which happened to move in their
+  // first hour cannot answer it.
+  //
+  // The old one-hour bound was justified by a projection - tens of thousands of
+  // records a day per chain, a state file in the hundreds of megabytes - that
+  // belongs to the market board's *week*, not to a day. Measured on the live
+  // set (2026-10-04): 40 records alive under a one-hour bound, ~950 bytes each
+  // on the wire, i.e. roughly 1 MB per chain per day at twenty-four hours.
+  //
+  // This clock is also not the one that retires most feed leads - silence is
+  // (see `trackStaleMs`), and it is still the shorter of the two for a pool the
+  // feed has stopped reporting. Raising this ceiling therefore widens which
+  // leads *can* be measured without filling the board with every pool ever
+  // seen; the cards that stop being news are what the board's collapsed
+  // section exists to hold.
+  feedTrackRetentionMs: 24 * 60 * 60_000,
   // The ceiling above is not what retires most leads — silence is. A lead the
   // market feed has stopped listing is over well before its week is up, and a
   // board that waits out the week shows a drained pool for six more days. The

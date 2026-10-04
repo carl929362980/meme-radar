@@ -1,9 +1,28 @@
 import crypto from 'node:crypto';
+import { normalizeTokenAddress } from './address.mjs';
 
 export const horizons = Object.freeze({ m5: 300_000, m15: 900_000, m30: 1800_000, h1: 3600_000, h2: 7200_000, h6: 21600_000, h24: 86400_000 });
 const MAX_SAMPLE_ATTEMPTS = 3;
 const MAX_SAMPLE_LATENESS_MS = 24 * 3600_000;
 const PAUSE_CODES = new Set(['AVE_RATE_LIMITED', 'AVE_BUDGET', 'AVE_HOURLY_BUDGET', 'AVE_TOTAL_BUDGET', 'AVE_QUOTA', 'AVE_DISCOVERY_RESERVE', 'AVE_ABORTED', 'AVE_CHANGED', 'AVE_DISABLED']);
+
+// Which provider may answer a row's read-back. One curve, one ruler: a baseline
+// that provider X priced is only ever measured against provider X's own
+// candles, because the gap between two rulers is not a market move.
+//
+// Two kinds of row this deliberately leaves unread, and the difference between
+// them is the whole point:
+//   * `baselineProvider: 'AVE'`  - readable, by AVE, for as long as that
+//     provider is wired up. Rows like this are the historical record of the
+//     machine's AVE era and are kept, not deleted and not converted.
+//   * `baselineProvider: 'LEGACY_UNKNOWN'` or absent - written before
+//     provenance was recorded at all. There is no ruler named on them, so
+//     there is no honest way to measure them: they are kept for history and
+//     counted as missing, never silently back-filled with whichever provider
+//     happens to be connected today.
+// A row is never re-labelled to make it readable.
+export const readableBaseline = (row, providerName) =>
+  typeof providerName === 'string' && providerName !== '' && row?.baselineProvider === providerName;
 
 export function sampleRejected(outcomes, candidate, now) {
   if (candidate.status !== 'HARD_REJECT' || !(candidate.price > 0)) return outcomes;
@@ -28,22 +47,86 @@ export function dueOutcomeJobs(outcomes, now) {
     .sort((a, b) => (a.row.sampleRetries?.[a.key]?.attempts || 0) - (b.row.sampleRetries?.[b.key]?.attempts || 0) || a.targetAt - b.targetAt);
 }
 
-export function selectOutcomeJobs(scopes, { enabledChains = [], provider = 'AVE', limit = 0, now = Date.now() } = {}) {
-  if (provider !== 'AVE' || !Number.isInteger(limit) || limit <= 0) return [];
+// The sampling frame the PRD asks for: every card the board actually printed,
+// not only the ones the screen vetoed.
+//
+// Sampling rejects alone measures what the machine avoided and never what it
+// missed - and "did this thing find anything" is the one question the outcome
+// table exists to answer. It also cannot be answered in practice from rejects
+// alone: they are sampled 1-in-5 and only after a deep audit, so on a quiet
+// chain the frame stays empty for days while the board is in fact showing cards.
+//
+// The baseline is the board's own, not a fresh reading: the snapshot the card
+// itself measures its ladder from, stamped with the moment that snapshot was
+// taken. Using anything else would answer a different question than the board
+// is asking.
+//
+// Returns { created, boarded }: how many cards the board printed and how many of
+// them entered the frame. The gap between the two is reported rather than
+// swallowed - a frame that quietly stops growing is how a calibration run dies
+// without anyone noticing. Rows it skipped are skipped for a stated reason and
+// nothing is invented for them: a lead with no baseline price has no
+// measurement to make, and a lead whose price came from a source the caller
+// did not name has no ruler to measure it with.
+export const BOARDED_SAMPLE_LIMIT = 200;
+
+export function sampleBoarded(outcomes, records, now, { providers = {}, limit = BOARDED_SAMPLE_LIMIT } = {}) {
+  const list = Array.isArray(outcomes) ? outcomes : [];
+  const rows = (Array.isArray(records) ? records : [])
+    .map(record => ({ record, address: normalizeTokenAddress(record?.chain, record?.address) }))
+    // The board can carry a row whose address this build cannot normalise; it is
+    // left alone rather than keyed loosely, which would merge two mints.
+    .filter(entry => Boolean(entry.address));
+  const ceiling = Number.isInteger(limit) && limit > 0 ? limit : BOARDED_SAMPLE_LIMIT;
+  // Counted once, before the loop: the ceiling is on the frame's total size, and
+  // counting the rows this call is itself adding would halve it.
+  const existing = list.filter(row => row.initialDecision === 'X_REVIEW').length;
+  let created = 0;
+  for (const { record, address } of rows) {
+    if (existing + created >= ceiling) break;
+    const price = Number(record?.snapshot?.price);
+    if (!(price > 0)) continue;
+    const providerName = providers?.[String(record?.source || 'market')];
+    if (typeof providerName !== 'string' || !providerName) continue;
+    if (list.some(row => normalizeTokenAddress(row.chain || record.chain, row.address) === address)) continue;
+    list.push({
+      chain: record.chain,
+      address,
+      symbol: record?.symbol ?? null,
+      baselineAt: Number(record?.snapshot?.at) || Number(record?.firstSeenAt) || now,
+      baselinePrice: price,
+      baselineProvider: providerName,
+      initialDecision: 'X_REVIEW',
+      latestDecision: 'X_REVIEW',
+      latestFailed: [],
+      samples: {},
+      sampling: 'BOARDED',
+      strategyVersion: 'radar-v3'
+    });
+    created++;
+  }
+  return { created, boarded: rows.length };
+}
+
+export function selectOutcomeJobs(scopes, { enabledChains = [], provider = 'GMGN', limit = 0, now = Date.now() } = {}) {
+  // Provider-agnostic on purpose. This used to be `provider !== 'AVE'` plus a
+  // `baselineProvider === 'AVE'` filter, which silently produced zero jobs the
+  // moment AVE stopped being the source. Now the name the caller passes is the
+  // name a row must carry, so wiring a new provider in is a one-word change and
+  // a forgotten one leaves rows unread rather than measured with a foreign ruler.
+  if (typeof provider !== 'string' || !provider || !Number.isInteger(limit) || limit <= 0) return [];
   const enabled = new Set(enabledChains);
   return Object.entries(scopes).filter(([chain]) => enabled.has(chain))
     .flatMap(([chain, rows]) => dueOutcomeJobs(rows.filter(row => (!row.chain || row.chain === chain)
-      && row.baselineProvider === 'AVE'), now).map(job => ({ ...job, chain })))
+      && readableBaseline(row, provider)), now).map(job => ({ ...job, chain })))
     .sort((a, b) => (a.row.sampleRetries?.[a.key]?.attempts || 0) - (b.row.sampleRetries?.[b.key]?.attempts || 0) || a.targetAt - b.targetAt)
     .slice(0, limit);
 }
 
-export async function collectOutcomeSamples(outcomes, provider, chain, { limit = 4, now = Date.now, deadline = Infinity, onlyKey, signal } = {}) {
+export async function collectOutcomeSamples(outcomes, provider, chain, { limit = 4, now = Date.now, deadline = Infinity, onlyKey, signal, providerName = 'GMGN' } = {}) {
   if (typeof provider.priceAt !== 'function') return outcomes;
   if (!Number.isInteger(limit) || limit <= 0) return outcomes;
-  // Historical records without an explicit source remain readable, but must
-  // never acquire AVE prices merely because this is now the only provider.
-  for (const job of dueOutcomeJobs(outcomes.filter(row => row.baselineProvider === 'AVE'), now()).filter(job => !onlyKey || job.key === onlyKey).slice(0, limit)) {
+  for (const job of dueOutcomeJobs(outcomes.filter(row => readableBaseline(row, providerName)), now()).filter(job => !onlyKey || job.key === onlyKey).slice(0, limit)) {
     if (signal?.aborted || now() >= deadline || provider.disabled || provider.nextAllowedAt > now()) break;
     const { row, key, targetAt } = job;
     let sample, errorCode = 'NO_CANDLE';

@@ -98,16 +98,31 @@ export const EXIT_ALERT_MS = 30 * 60_000;
 // A feed lead and a market lead do not age at the same rate, so they must not
 // share one clock. The market hot list lists pools that are still notable a day
 // later. The discovery feed only ever knows about a pool while it is inside its
-// own window - half an hour, for this chain - so a feed lead the feed has stopped
-// reporting is not a lead any more, it is a memory.
+// own window, so a feed lead the feed has stopped reporting is not a lead any
+// more, it is a memory - and silence, further down, is what retires it.
 //
-// Sharing the market board's week would mean keeping every pool ever seen: at the
-// measured arrival rate that is tens of thousands of records a day per chain, a
-// state file in the hundreds of megabytes, rewritten on every cycle, and a board
-// nobody can read. The bound is derived from the feed's own horizon rather than
-// chosen by feel - twice the window a pool can still appear in - which is long
-// enough to watch a curve travel and short enough that the board stays a board.
-export const FEED_LEAD_RETENTION_MS = 60 * 60_000;
+// Raised from one hour to twenty-four for one reason: an hour is shorter than
+// this machine's own measurement horizon. The outcome table reads a baseline
+// back at T+5m through T+24h, so a card deleted at T+1h can only ever be
+// measured on the horizons it happened to reach in its first hour - and the
+// table then answers a question about impatient cards rather than about the
+// board. The ceiling is what lets a slow card still be entered into the frame.
+//
+// The cost that kept this at an hour was a projection, and the projection was
+// for the wrong number: tens of thousands of records a day per chain and a
+// state file in the hundreds of megabytes is what sharing the market board's
+// *week* would do. Measured on the live set while this was raised
+// (2026-10-04): 40 records alive under the one-hour bound, ~950 bytes each
+// serialised - so a day is on the order of a megabyte per chain, and the
+// ceiling is not the clock that actually retires a feed lead anyway.
+//
+// What does keep a day of leads from becoming a graveyard is the board, not the
+// clock: leads whose measurement is finished, and leads that have been crossed
+// off, belong in the collapsed section rather than on the first screen. Both
+// halves are needed - without the ceiling there is nothing to measure, and
+// without the collapsed section the first screen is a list of yesterday's pools
+// sorted by how thoroughly they died.
+export const FEED_LEAD_RETENTION_MS = 24 * 60 * 60_000;
 
 // A record's age is a ceiling, not a reason to keep it. A lead the market feed
 // has stopped listing is not a lead any more, it is a memory - the sentence the

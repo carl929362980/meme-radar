@@ -604,5 +604,11 @@ export class GmgnDiscovery {
 // reporting AUTH_REQUIRED.
 export function createGmgnDiscovery({ apiKey = loadApiKey(), client, ...options } = {}) {
   if (!apiKey && !client) return null;
-  return new GmgnDiscovery({ ...options, client: client || new GmgnClient({ apiKey, minGapMs: options.minGapMs ?? 1_200 }) });
+  // 2.2 s between requests, the floor this project holds GMGN to. It is a floor
+  // and not a tuning knob: throttling there escalates to an IP ban rather than to
+  // a 429, so spacing is insurance against a failure that takes the whole feed
+  // down for minutes. It does not cost anything at the cadences this engine
+  // actually runs - polls are spaced 25 s to 120 s apart - and the read-back
+  // shares this client, so one bucket paces both discovery and measurement.
+  return new GmgnDiscovery({ ...options, client: client || new GmgnClient({ apiKey, minGapMs: options.minGapMs ?? 2_200 }) });
 }

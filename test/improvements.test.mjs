@@ -19,9 +19,9 @@ const temp = t => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'radar-v3-
 
 test('historical samples survive delisting; missing prices stay missing and retries back off', async () => {
   const now = 1800000000000;
-  const rows = [{ address, chain: 'bsc', baselineProvider: 'AVE', baselineAt: now-1900000, baselinePrice: 2, initialDecision:'X_REVIEW', samples: {} }];
+  const rows = [{ address, chain: 'bsc', baselineProvider: 'GMGN', baselineAt: now-1900000, baselinePrice: 2, initialDecision:'X_REVIEW', samples: {} }];
   const calls = [];
-  const provider = { priceAt: async (a, at, chain) => { calls.push([a,at,chain]); return { at, price: 3, source: 'AVE_1M_CLOSE' }; } };
+  const provider = { priceAt: async (a, at, chain) => { calls.push([a,at,chain]); return { at, price: 3, source: 'GMGN_1M_CLOSE' }; } };
   await collectOutcomeSamples(rows, provider, 'bsc', { now: () => now, limit: 3 });
   assert.equal(rows[0].samples.m30.return, .5);
   assert.equal(calls.length, 3);
