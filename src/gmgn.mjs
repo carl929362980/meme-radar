@@ -51,8 +51,39 @@ export const GMGN_ROUTES = Object.freeze({
   // Both are weight 1 and both use exist-auth (API key only, no signature),
   // so a cluster of smart-money buys is affordable to poll continuously.
   smartmoney: Object.freeze({ method: 'GET', path: '/v1/user/smartmoney', weight: 1 }),
-  kol: Object.freeze({ method: 'GET', path: '/v1/user/kol', weight: 1 })
+  kol: Object.freeze({ method: 'GET', path: '/v1/user/kol', weight: 1 }),
+  // The only route that answers "what did this token cost at moment X". Without
+  // it the outcome sampler (src/outcomes.mjs) short-circuits on
+  // `typeof provider.priceAt !== 'function'` and no result is ever measured, so
+  // this radar can never be falsified. Weight 2, so a read-back cycle is cheap
+  // but not free - it still shares the one IP bucket with discovery.
+  kline: Object.freeze({ method: 'GET', path: '/v1/market/token_kline', weight: 2 })
 });
+
+// Read-back window for priceAt. A 1-minute candle at targetAt can only exist if
+// the window spans it; three minutes each way absorbs a candle published a
+// little late without pulling in so much that the nearest-match test becomes
+// meaningless.
+export const KLINE_WINDOW_MS = 3 * 60_000;
+// A candle further from the target than this is not an answer to the question
+// that was asked. Matches the tolerance src/outcomes.mjs already applies to the
+// sample it accepts.
+export const KLINE_MATCH_MS = 60_000;
+// 🚨 `time` is the candle's OPEN moment, not the moment its close is true.
+// Measured (probe-kline-openclose, 2026-10-04, SOL LEVERAGED): the newest row
+// always sits exactly at floor(now/60000)*60000, and the same row's close was
+// still moving 70 s later (0.000026365369 -> 0.000025904357, volume
+// 1859 -> 4550) while every older row was byte-identical - i.e. the newest row
+// is the in-progress candle. The close printed on it only becomes true one
+// resolution later.
+//
+// This is not cosmetic. src/outcomes.mjs rejects any sample whose
+// |at - targetAt| exceeds 60 s; reporting the open would date a price 60 s
+// early and, for a target landing late in a minute, push the nearest candle
+// past the tolerance so the sample is thrown away as "no candle" - a silent
+// zero dressed up as an absent market.
+export const KLINE_CLOSE_OFFSET_MS = 60_000;
+export const KLINE_RESOLUTION = '1m';
 
 export const TRACK_KINDS = Object.freeze(['smartmoney', 'kol']);
 
@@ -624,6 +655,59 @@ export class GmgnClient {
     const data = await this.request('tokenInfo', { query: { chain, address } });
     if (!data || typeof data !== 'object') return null;
     return normalizeTokenInfo(data);
+  }
+
+  // One token's price at one moment in the past, read back through the kline
+  // route - the question the outcome sampler asks so this radar can be proved
+  // wrong. Deliberately the same contract as AveClient.priceAt:
+  // `{ at, price, source, capturedAt }` or null, so src/outcomes.mjs cannot tell
+  // the two providers apart and needs no per-provider branch.
+  //
+  // 🚨 `from`/`to` are MILLISECONDS. The gmgn-cli converts seconds for you; this
+  // client speaks HTTP directly, so nothing converts. Measured
+  // (probe-kline-ms, 2026-10-04, SOL LIFE): the same address over the same
+  // window answered 6 candles in milliseconds and 0 candles in seconds, both as
+  // HTTP 200 with code 0 - a wrong unit is indistinguishable from "no trades
+  // happened", which is exactly the silence this project refuses to emit.
+  //
+  // Returns null rather than a zero or a guess whenever the answer is missing:
+  // no candle in the window, a candle too far from the target, or a close that
+  // is not a positive number. A read-back that is still being written (the
+  // in-progress minute) also reads as null - it is not an answer yet.
+  async priceAt(ca, targetAt, chain = 'bsc', options = {}) {
+    const address = String(ca ?? '').trim();
+    if (!address || !Number.isFinite(targetAt) || targetAt <= 0) return null;
+    const now = this.now();
+    // The future has no candle; asking for it would only spend quota.
+    if (targetAt > now) return null;
+    const data = await this.request('kline', {
+      query: {
+        chain,
+        address,
+        resolution: KLINE_RESOLUTION,
+        from: targetAt - KLINE_WINDOW_MS,
+        to: Math.min(now, targetAt + KLINE_WINDOW_MS)
+      }
+    });
+    const list = Array.isArray(data?.list) ? data.list : Array.isArray(data) ? data : null;
+    if (!list || !list.length) return null;
+    let best = null;
+    for (const row of list) {
+      const openedAt = num(row?.time);
+      if (openedAt === null || openedAt <= 0) continue;
+      const price = num(row?.close);
+      // A zero or negative close is a real reading on this route for dead
+      // pools, and folding it into a return would fabricate a -100% outcome.
+      if (price === null || !(price > 0)) continue;
+      const at = openedAt + KLINE_CLOSE_OFFSET_MS;
+      // An unfinished candle is not an answer; it is still moving.
+      if (at > now) continue;
+      const distance = Math.abs(at - targetAt);
+      if (distance > KLINE_MATCH_MS) continue;
+      if (!best || distance < best.distance) best = { distance, at, price };
+    }
+    if (!best) return null;
+    return { at: best.at, price: best.price, source: 'GMGN_1M_CLOSE', capturedAt: this.now() };
   }
 
   // Real-time trades from wallets GMGN has tagged smart money or KOL. `side` is

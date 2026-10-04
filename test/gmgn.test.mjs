@@ -9,7 +9,8 @@ import assert from 'node:assert/strict';
 import {
   GmgnClient, buildTrenchesBody, loadApiKey, normalizeTrenchesRow, unwrap, gmgnBareAddress,
   gmgnDuration, TRENCHES_PLATFORMS, TRENCHES_QUOTE_ADDRESS_TYPES,
-  normalizeTrackRow, clusterTrades, CLUSTER_WINDOW_MS, normalizeTokenInfo, GMGN_ROUTES
+  normalizeTrackRow, clusterTrades, CLUSTER_WINDOW_MS, normalizeTokenInfo, GMGN_ROUTES,
+  KLINE_WINDOW_MS, KLINE_MATCH_MS, KLINE_CLOSE_OFFSET_MS, KLINE_RESOLUTION
 } from '../src/gmgn.mjs';
 
 function jsonResponse(body, status = 200, headers = {}) {
@@ -526,4 +527,117 @@ test('the token-info route exists at weight 1 and normalizes the measured payloa
   assert.equal(normalizeTokenInfo(null), null);
   // A shell payload must normalize without throwing and answer null, not undefined.
   assert.equal(normalizeTokenInfo({}).price, null);
+});
+
+// The read-back the outcome sampler needs. Every one of these is a way the
+// route can answer "nothing" while looking like a success (HTTP 200, code 0),
+// so each one is pinned to null rather than to a zero that would later be
+// divided into a fake -100% return.
+test('the kline route exists at weight 2 on the measured path', () => {
+  assert.equal(GMGN_ROUTES.kline.weight, 2);
+  assert.equal(GMGN_ROUTES.kline.path, '/v1/market/token_kline');
+  assert.equal(GMGN_ROUTES.kline.method, 'GET');
+});
+
+test('priceAt sends from/to in milliseconds and 1m resolution, and reads the {list} envelope', async () => {
+  const now = 1_791_000_000_000;
+  const targetAt = now - 30 * 60_000;
+  const seen = [];
+  const client = new GmgnClient({
+    apiKey: 'k', now: () => now,
+    fetchImpl: async (url) => {
+      seen.push(url);
+      return ok({ list: [{ time: String(targetAt - 60_000), open: '1', close: '2', high: '2', low: '1', volume: '10', amount: '5' }] });
+    }
+  });
+  const sample = await client.priceAt('0xabc', targetAt, 'bsc');
+  assert.deepEqual(sample, { at: targetAt, price: 2, source: 'GMGN_1M_CLOSE', capturedAt: now });
+
+  const query = new URL(seen[0]).searchParams;
+  assert.equal(query.get('resolution'), KLINE_RESOLUTION);
+  assert.equal(query.get('address'), '0xabc');
+  assert.equal(query.get('chain'), 'bsc');
+  // The trap this route hides: seconds are answered with 200/code 0/zero rows.
+  // A value in the year 2026 is ~1.79e9 in seconds and ~1.79e12 in ms, so the
+  // assert is on the magnitude, not on a literal.
+  assert.equal(Number(query.get('from')), targetAt - KLINE_WINDOW_MS);
+  assert.equal(Number(query.get('to')), targetAt + KLINE_WINDOW_MS);
+  assert.ok(Number(query.get('from')) > 1e12, 'from is milliseconds, not seconds');
+});
+
+test('priceAt picks the nearest candle and dates it at the close, not the open', async () => {
+  const now = 1_791_000_000_000;
+  const targetAt = now - 30 * 60_000;
+  // Candle opens at targetAt-60s: its close is true exactly at targetAt.
+  // A nearer-by-open candle exists one minute later, so this only passes if the
+  // offset is applied before the nearest-match test.
+  const list = [
+    { time: targetAt - 60_000, close: '1.0' },
+    { time: targetAt, close: '9.0' },
+    { time: targetAt + 60_000, close: '9.0' }
+  ];
+  const client = new GmgnClient({ apiKey: 'k', now: () => now, fetchImpl: async () => ok({ list }) });
+  const sample = await client.priceAt('0xabc', targetAt, 'bsc');
+  assert.equal(sample.price, 1.0);
+  assert.equal(sample.at, targetAt);
+});
+
+test('priceAt reports null for every empty answer the route can give', async () => {
+  const now = 1_791_000_000_000;
+  const targetAt = now - 30 * 60_000;
+  const withList = async (list) => {
+    const client = new GmgnClient({ apiKey: 'k', now: () => now, fetchImpl: async () => ok({ list }) });
+    return client.priceAt('0xabc', targetAt, 'bsc');
+  };
+  // No candles at all - the shape the seconds bug and a dead pool both produce.
+  assert.equal(await withList([]), null);
+  // A payload with no list at all.
+  const bare = new GmgnClient({ apiKey: 'k', now: () => now, fetchImpl: async () => ok({}) });
+  assert.equal(await bare.priceAt('0xabc', targetAt, 'bsc'), null);
+  // Every candle further than the tolerance from the target.
+  assert.equal(await withList([{ time: targetAt - 10 * 60_000, close: '1.0' }]), null);
+  // A close that is zero: a dead pool, not a price. Zero must never become a
+  // return, because 0/baseline-1 fabricates a total loss.
+  assert.equal(await withList([{ time: targetAt - 60_000, close: '0' }]), null);
+  assert.equal(await withList([{ time: targetAt - 60_000, close: '-1' }]), null);
+  assert.equal(await withList([{ time: targetAt - 60_000, close: 'nope' }]), null);
+  assert.equal(await withList([{ time: null, close: '1.0' }]), null);
+});
+
+test('priceAt never answers for the future, for a missing address, or with a candle still being written', async () => {
+  const now = 1_791_000_000_000;
+  const client = new GmgnClient({ apiKey: 'k', now: () => now, fetchImpl: async () => ok({ list: [{ time: now - 60_000, close: '1.0' }] }) });
+  assert.equal(await client.priceAt('0xabc', now + 60_000, 'bsc'), null, 'the future has no candle');
+  assert.equal(await client.priceAt('', now - 60_000, 'bsc'), null);
+  assert.equal(await client.priceAt(null, now - 60_000, 'bsc'), null);
+  assert.equal(await client.priceAt('0xabc', NaN, 'bsc'), null);
+  // The in-progress minute: its close is still moving, so it is not an answer.
+  // Its close-moment is now+60s, which is also why the offset matters here.
+  const inProgress = new GmgnClient({ apiKey: 'k', now: () => now, fetchImpl: async () => ok({ list: [{ time: now, close: '1.0' }] }) });
+  assert.equal(await inProgress.priceAt('0xabc', now - 1000, 'bsc'), null);
+});
+
+test('priceAt is null rather than a throw when the transport or the API fails', async () => {
+  const now = 1_791_000_000_000;
+  const targetAt = now - 30 * 60_000;
+  const broken = new GmgnClient({ apiKey: 'k', now: () => now, fetchImpl: async () => { throw new Error('boom'); } });
+  assert.equal(await broken.priceAt('0xabc', targetAt, 'bsc'), null);
+  assert.equal(broken.snapshot().failed, 1);
+  assert.ok(broken.snapshot().lastErrorCode, 'the failure is recorded, not swallowed');
+  const erroring = new GmgnClient({ apiKey: 'k', now: () => now, fetchImpl: async () => jsonResponse({ code: 4001, error: 'BAD_INPUT' }) });
+  assert.equal(await erroring.priceAt('0xabc', targetAt, 'bsc'), null);
+  // No key: nothing is spent and the reason is recorded.
+  let calls = 0;
+  const keyless = new GmgnClient({ apiKey: '', now: () => now, fetchImpl: async () => { calls++; return ok({ list: [] }); } });
+  assert.equal(await keyless.priceAt('0xabc', targetAt, 'bsc'), null);
+  assert.equal(calls, 0);
+  assert.equal(keyless.snapshot().lastErrorCode, 'NO_API_KEY');
+});
+
+test('the read-back window and tolerance are the ones the sampler accepts', () => {
+  assert.equal(KLINE_MATCH_MS, 60_000);
+  assert.equal(KLINE_CLOSE_OFFSET_MS, 60_000);
+  // Three minutes each way: wide enough to contain a late-published candle,
+  // narrow enough that "nearest candle" still means something.
+  assert.equal(KLINE_WINDOW_MS, 180_000);
 });
