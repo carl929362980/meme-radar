@@ -183,7 +183,7 @@ function retainedLiveRows(scope, chain, now = Date.now()) {
 
 function mergedVoiceRows(liveDiscovery, state, scope, chain) {
   const rejected = rejectedAuditKeys(scope, chain);
-  // The open-source fast pool is driven solely by the current AVE discovery
+  // The open-source fast pool is driven solely by the current discovery
   // snapshot. A historical X_REVIEW must not reappear or speak after today's
   // market screen has removed that token. Deep hard rejections still veto a
   // currently live row through the retained 24-hour audit queue.

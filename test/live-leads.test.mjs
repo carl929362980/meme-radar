@@ -60,7 +60,7 @@ test('persisted display receipts cannot extend themselves beyond the one-hour sa
   assert.equal(sanitizeLiveLead({ ...valid, displayUntil: valid.lastConfirmedAt + 60 * 60_000 + 1 }, 'bsc'), null);
 });
 
-test('legacy receipts cannot claim AVE origin and legacy credential patterns remain redacted', () => {
+test('legacy receipts cannot claim a source origin they do not have, and credential patterns stay redacted', () => {
   const valid = reconcileLiveLeads([], [{ address: ADDRESS, eligible: true, lead: lead() }], {
     chain: 'bsc', confirmedAt: AT
   })[0];

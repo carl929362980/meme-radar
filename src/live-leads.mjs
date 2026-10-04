@@ -36,7 +36,15 @@ export function sanitizeLiveLead(source, fallbackChain = '') {
   if (!source || typeof source !== 'object') return null;
   const chain = text(source.chain || fallbackChain, 24).toLowerCase();
   const address = text(source.address, 80);
-  if (!chain || !validTokenAddress(chain, address) || source.marketProvider !== 'AVE') return null;
+  // A named source, not one named provider. This used to say `!== 'AVE'`, which
+  // turned every row the current source produces into "not a lead" - a display
+  // receipt channel that silently stopped writing the moment the source
+  // changed, and a `retained` count pinned at 0 for no visible reason. AVE is
+  // still accepted because its receipts are already on disk and a retirement
+  // does not retroactively unmake a screen it really passed; anything else,
+  // including provenance explicitly marked unknown, is not a source.
+  if (!chain || !validTokenAddress(chain, address)) return null;
+  if (source.marketProvider !== 'AVE' && source.marketProvider !== 'GMGN') return null;
   const qualifiedAt = clock(source.qualifiedAt ?? source.firstSeenAt ?? source.newAt);
   const lastConfirmedAt = clock(source.lastConfirmedAt ?? source.qualifiedAt);
   const displayUntil = clock(source.displayUntil);
@@ -45,7 +53,7 @@ export function sanitizeLiveLead(source, fallbackChain = '') {
   return {
     chain,
     address: identity(chain, address),
-    marketProvider: 'AVE',
+    marketProvider: text(source.marketProvider, 24),
     symbol: safeText(source.symbol || '?', 30),
     name: safeText(source.name, 80),
     marketCap: number(source.marketCap),
