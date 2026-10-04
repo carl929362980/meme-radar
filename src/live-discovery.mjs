@@ -115,9 +115,13 @@ export class LiveDiscovery {
   // Which provider this channel is fed by. Read from the client rather than
   // assumed, so switching the discovery source cannot leave rows labelled with
   // the previous one - a row's provider is what decides which ruler measured it.
+  // Never defaults to the retired source. A fallback of 'AVE' is what made an
+  // unrecognised snapshot look like a provider that no longer exists, and rows
+  // wearing that name are then held to an expiry clock the current source does
+  // not publish. Unknown is unknown.
   get marketProvider() {
-    try { return String(this.provider?.snapshot?.().provider || '') === 'GMGN' ? 'GMGN' : 'AVE'; }
-    catch { return 'AVE'; }
+    try { return String(this.provider?.snapshot?.().provider || ''); }
+    catch { return ''; }
   }
 
   async enrichMarket(chain, rows) {
@@ -356,7 +360,11 @@ export class LiveDiscovery {
     // and still read as "限频等待".
     const pausedStatus = pauseCode ? 'RATE_LIMITED' : null;
     const rows = state.rows.map(row => {
-      if (row.marketProvider !== this.marketProvider) return row;
+      // An unreadable name is not a mismatch. Skipping the freshness recompute
+      // on a name we do not actually know would leave a row wearing whatever
+      // `auditEligible` it was stored with; applying it can only ever mark a
+      // row stale, never fresh.
+      if (this.marketProvider && row.marketProvider !== this.marketProvider) return row;
       const stale = row.stale || this.now() - row.sourceUpdatedAt > 60000 || row.expiresAt !== null && row.expiresAt <= this.now();
       return { ...row, stale, auditEligible: row.auditEligible && !stale,
         discoveryState: row.discoveryState === 'READY' && stale ? 'STALE' : row.discoveryState };
@@ -378,7 +386,9 @@ export class LiveDiscovery {
     if (snapshot.stale || this.provider.disabled || snapshot.status === 'AUTH_REQUIRED') return null;
     const row = this.raw.get(chain)?.get(identity(chain, address));
     if (!row) return null;
-    if (row.marketProvider !== this.marketProvider) return null;
+    // Known mismatch only: this channel may not answer for a row another
+    // provider measured. An unreadable name is not a mismatch.
+    if (this.marketProvider && row.marketProvider !== this.marketProvider) return null;
     if (!discoveryScreen(row, { ...this.settings, chain }, this.now() / 1000).pass) return null;
     // Interval-specific counters must never masquerade as five-minute counters.
     const { volume, swaps, buys, sells, price_change_percent, ...audit } = row;
