@@ -174,9 +174,14 @@ export class GmgnRadarSource {
   #samples;
   #inflight;
 
+  // What a caller would have to wait for. The client's own `nextAllowedAt`
+  // also carries the routine 2.2 s spacing between two requests, which is
+  // pacing, not a wait: publishing it made the radar read as 限频等待 for two
+  // seconds after every successful read, and made the outcome lane abandon its
+  // read-back right after discovery. Only a real cooldown (`retryAt`) is a wait.
   get nextAllowedAt() {
     const snapshot = this.client.snapshot?.() || {};
-    const next = Math.max(Number(snapshot.retryAt) || 0, Number(snapshot.nextAllowedAt) || 0);
+    const next = Number(snapshot.retryAt) || 0;
     return Number.isFinite(next) && next > 0 ? next : 0;
   }
 
@@ -239,7 +244,7 @@ export class GmgnRadarSource {
     if (pending) return pending;
       const job = (async () => {
         const at = this.now();
-        const results = [];
+        const results = [], attempts = [];
         let failed = 0;
         for (const route of ['trending', 'trenches']) {
         if (route === 'trenches' && !plan.trenches) continue;
@@ -247,6 +252,7 @@ export class GmgnRadarSource {
         let rows = null;
         try { rows = await this.#readRoute(route, chain, plan); }
         catch { rows = null; }
+        attempts.push({ route, rows });
         if (rows === null) { this.metrics.failures++; failed++; continue; }
         this.metrics.byRoute[route] = (this.metrics.byRoute[route] || 0) + 1;
         results.push({ route, rows });
@@ -257,9 +263,13 @@ export class GmgnRadarSource {
       const sample = { rows, capturedAt: at, counts, received: results.reduce((sum, entry) => sum + entry.rows.length, 0) };
       this.#samples.set(chain, sample);
       // A route that did not answer is reported, because a radar that quietly
-      // lost one of its two routes still looks like a radar.
+      // lost one of its two routes still looks like a radar. Per-route health is
+      // recorded for every route that was attempted, so a route that answered
+      // cannot be published as failed just because nobody wrote its row down.
+      const routeHealth = Object.fromEntries(attempts.map((entry) => [entry.route,
+        { ok: entry.rows !== null, count: entry.rows ? entry.rows.length : 0 }]));
       this.lastDiscoveryHealth = { provider: RADAR_PROVIDER, complete: failed === 0, checkedAt: at,
-        received: sample.received, counts, failedRoutes: failed };
+        received: sample.received, counts, failedRoutes: failed, ...routeHealth };
       return sample;
     })().finally(() => { if (this.#inflight.get(chain) === job) this.#inflight.delete(chain); });
     this.#inflight.set(chain, job);

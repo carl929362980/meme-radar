@@ -335,10 +335,11 @@ export class LiveDiscovery {
         .map(row => [identity(chain, row.address), row])));
     } catch (error) {
       if (this.stopped || controller.signal.aborted || epoch !== this.provider.keyEpoch) return;
-      const status = error.code === 'AVE_TOTAL_BUDGET' ? 'TOTAL_BUDGET_PAUSED' : error.code === 'AVE_HOURLY_BUDGET' ? 'HOURLY_BUDGET_PAUSED'
-        : error.code === 'AVE_BUDGET' ? 'BUDGET_PAUSED' : error.code === 'AVE_QUOTA' ? 'QUOTA_PAUSED'
-        : error.code === 'AVE_RATE_LIMITED' ? 'RATE_LIMITED'
-        : ['AVE_AUTH', 'AVE_CONFIG', 'AVE_DISABLED'].includes(error.code) ? 'AUTH_REQUIRED' : 'ERROR';
+      // AVE's budget codes went with AVE. What is left is the source telling us
+      // it needs credentials, telling us it is cooling, or failing.
+      const code = String(error.code || '');
+      const status = ['NO_API_KEY', 'SOURCE_AUTH', 'SOURCE_NO_KEY'].includes(code) ? 'AUTH_REQUIRED'
+        : ['SOURCE_COOLING', 'COOLING', 'HTTP_429'].includes(code) ? 'RATE_LIMITED' : 'ERROR';
       this.states.set(chain, { ...old, status, lastAttemptAt: at, code: String(error.code || 'READ_FAILED') });
       this.nextPollAt = Math.max(this.nextPollAt, number(error.retryAt) || 0, this.now() + (status === 'AUTH_REQUIRED' ? 60000 : status === 'ERROR' ? 30000 : error.retryAfterMs || 0));
     } finally { if (this.controller === controller) this.controller = null; this.running = false; this.arm(); }
@@ -347,9 +348,13 @@ export class LiveDiscovery {
   snapshot(chain) {
     this.syncCredentials();
     const state = this.states.get(chain) || { status: 'WAITING', rows: [], lastSuccessAt: 0, pollCount: 0 };
-    let pauseCode; try { pauseCode = this.provider.snapshot?.().pauseCode; } catch { /* Optional public provider health. */ }
-    const pausedStatus = pauseCode === 'AVE_TOTAL_BUDGET' ? 'TOTAL_BUDGET_PAUSED' : pauseCode === 'AVE_HOURLY_BUDGET' ? 'HOURLY_BUDGET_PAUSED'
-      : pauseCode === 'AVE_BUDGET' ? 'BUDGET_PAUSED' : pauseCode === 'AVE_QUOTA' ? 'QUOTA_PAUSED' : 'RATE_LIMITED';
+    let pauseCode = null; try { pauseCode = this.provider.snapshot?.().pauseCode || null; } catch { /* Optional public provider health. */ }
+    // A pause is only a pause when the source says it is cooling. This source
+    // spaces two requests 2.2 s apart and reports the next one's earliest start
+    // in `nextAllowedAt`; calling that RATE_LIMITED put the radar behind a
+    // countdown that expired before the page could draw it - the radar had rows
+    // and still read as "限频等待".
+    const pausedStatus = pauseCode ? 'RATE_LIMITED' : null;
     const rows = state.rows.map(row => {
       if (row.marketProvider !== this.marketProvider) return row;
       const stale = row.stale || this.now() - row.sourceUpdatedAt > 60000 || row.expiresAt !== null && row.expiresAt <= this.now();
@@ -361,7 +366,8 @@ export class LiveDiscovery {
     return structuredClone({ ...state, rows, chain, intervalMs: this.intervalMs, execution: false,
       ...(diagnostics ? { diagnostics } : {}),
       nextPollAt: this.cacheOnly ? this.nextPollAt : Math.max(this.nextPollAt, this.provider.nextAllowedAt || 0),
-      status: this.provider.disabled ? 'AUTH_REQUIRED' : pauseCode === 'AVE_TOTAL_BUDGET' || this.provider.nextAllowedAt > this.now() ? pausedStatus : state.status,
+      status: this.provider.disabled ? 'AUTH_REQUIRED'
+        : pausedStatus || (this.provider.nextAllowedAt > this.now() ? 'RATE_LIMITED' : state.status),
       stale: !state.lastSuccessAt || this.now() - state.lastSuccessAt > 60000 || rows.length > 0 && rows.every(row => row.stale === true) });
   }
 
