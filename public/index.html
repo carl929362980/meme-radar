@@ -2608,20 +2608,7 @@
       const data = liveData && liveData.chain === chain ? liveData : null;
       const stale = !data || data.stale || !data.lastSuccessAt || Date.now() - data.lastSuccessAt > 60000;
       const updateFailed = liveRefreshErrorChain === chain;
-      const status = !liveEnabled ? 'livePaused' : lastData && !serviceOnline ? 'localOffline' : updateFailed ? 'liveRefreshFailed' : data && data.status === 'BUDGET_PAUSED' ? 'budgetPaused'
-        : data && data.status === 'HOURLY_BUDGET_PAUSED' ? 'hourlyPaused' : data && data.status === 'TOTAL_BUDGET_PAUSED' ? 'totalPaused'
-        : data && data.status === 'QUOTA_PAUSED' ? 'quotaPaused' : data && data.status === 'RATE_LIMITED' ? 'apiRateLimited'
-        : data && data.status === 'AUTH_REQUIRED' ? 'statusAuth' : data && data.status === 'ERROR' ? 'apiNetworkError'
-          : !data || data.status === 'LOADING' || data.status === 'WAITING' ? 'livePolling'
-            : data.diagnostics && data.diagnostics.pending > 0 && !data.diagnostics.ready ? 'livePending' : stale ? 'liveStale' : 'liveReady';
       byId('liveAuto').checked = liveEnabled;
-      const market = lastData && lastData.market;
-      const liveState = byId('liveState');
-      const marketBlockedUntil = number(market?.nextAllowedAt);
-      const rateLimitShownAbove = liveEnabled && serviceOnline && !updateFailed && (data?.status === 'RATE_LIMITED'
-        || market?.pauseCode === 'SOURCE_COOLING' && marketBlockedUntil > Date.now());
-      liveState.hidden = rateLimitShownAbove;
-      liveState.textContent = rateLimitShownAbove ? '' : t(status);
       const observedRows = unifiedPoolRows(chain);
       const now = Date.now();
       const rows = observedRows.slice().sort(function (a, b) {
