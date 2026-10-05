@@ -123,9 +123,12 @@ server.maxRequestsPerSocket = 100;
 
 await new Promise((resolve, reject) => {
   server.once('error', reject);
-  server.listen(config.port, '127.0.0.1', resolve);
+  // Bind the unspecified address (dual-stack on IPv6-capable hosts) so both
+  // `localhost` (::1) and `127.0.0.1` resolve. Non-loopback peers are still
+  // rejected per-request by isTrustedLocalRequest() in server.mjs.
+  server.listen(config.port, resolve);
 });
-console.log(`Meme雷达：http://127.0.0.1:${config.port}`);
+console.log(`Meme雷达：http://127.0.0.1:${config.port}  （或 http://localhost:${config.port}）`);
 console.log('只读扫描器：交易执行永久关闭');
 let closing = false;
 function shutdown() {
